@@ -209,9 +209,14 @@ __marimo__/
 # ──────────────────────────────────────────────────────────────
 # GMPilot — données runtime & artefacts (jamais versionnés)
 # ──────────────────────────────────────────────────────────────
-# Contenu du cache runtime ignoré, mais le dossier (vide) reste versionné
+# Contenu du cache runtime ignoré, mais les dossiers (vides) restent versionnés.
+# On ré-inclut d'abord le sous-dossier cve/ (sinon git n'y descend pas), puis on
+# ignore son contenu en conservant le .gitkeep.
 /cache/*
 !/cache/.gitkeep
+!/cache/cve/
+/cache/cve/*
+!/cache/cve/.gitkeep
 *.db
 *.db.bak
 *.sqlite
