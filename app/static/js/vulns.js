@@ -226,6 +226,17 @@ const synthExploited = document.getElementById('synth-exploited');
   });
 })();
 
+// Met à jour un badge « En cours N/M » selon les vulns visibles ; masqué si N=0.
+function updateIpBadge(el, ip, total) {
+  if (!el) return;
+  if (ip > 0) {
+    el.style.display = '';
+    el.innerHTML = '<i class="ti ti-progress me-1"></i>En cours' + (ip < total ? ' ' + ip + '/' + total : '');
+  } else {
+    el.style.display = 'none';
+  }
+}
+
 function applySynthFilters() {
   const vendor   = synthVendor.value;
   const product  = synthProduct.value;
@@ -242,7 +253,7 @@ function applySynthFilters() {
     const vendorName = (vg.dataset.vendor || '').toLowerCase();
     // Filtre vendor
     if (vendor && vg.dataset.vendor !== vendor) { vg.style.display = 'none'; return; }
-    let vProducts = 0, vVulns = 0;
+    let vProducts = 0, vVulns = 0, vIP = 0;
     vg.querySelectorAll('tr.synth-product-group').forEach(tr => {
       const productName = (tr.dataset.product || '').toLowerCase();
       const hosts = tr.dataset.hosts || '';
@@ -274,24 +285,28 @@ function applySynthFilters() {
       // Filtrage au niveau des vulns individuelles : un produit mixte (avec/sans
       // ticket) reste visible mais n'affiche que les vulns du statut demandé. Le
       // compteur reflète les vulns effectivement visibles.
-      let shownV = totalV;
+      let shownV = totalV, shownIP = inProg;
       if (detail && detail.classList.contains('synth-product-detail')) {
         if (!ok) {
           detail.style.display = 'none';
         } else if (statusF) {
-          shownV = 0;
+          shownV = 0; shownIP = 0;
           detail.querySelectorAll('.synth-vuln-row').forEach(function (vr) {
             const vs = vr.dataset.status || 'active';
             const rowOk = (statusF === 'in_progress') ? (vs !== 'active') : (vs === 'active');
             vr.style.display = rowOk ? '' : 'none';
-            if (rowOk) shownV++;
+            if (rowOk) { shownV++; if (vs !== 'active') shownIP++; }
           });
         } else {
           detail.querySelectorAll('.synth-vuln-row').forEach(function (vr) { vr.style.display = ''; });
         }
       }
-      if (ok) { vProducts++; vVulns += shownV; }
+      // Badge « En cours » du produit : reflète les vulns actuellement visibles.
+      updateIpBadge(tr.querySelector('.synth-ip-badge'), shownIP, shownV);
+      if (ok) { vProducts++; vVulns += shownV; vIP += shownIP; }
     });
+    // Badge « En cours » du vendor : somme sur les produits visibles.
+    updateIpBadge(vg.querySelector('.synth-vendor-ip-badge'), vIP, vVulns);
     vg.style.display = vProducts > 0 ? '' : 'none';
 
     // Compteurs par vendor (en-tête de l'accordéon). Cible la classe si le

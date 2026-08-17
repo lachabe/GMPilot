@@ -236,7 +236,7 @@
           <i class="ti ti-building text-cyan" style="font-size:0.85rem"></i>
           <span class="fw-semibold text-cyan">{{ g.vendor }}</span>
           {% endif %}
-          {% if _v_ip.count %}<span class="badge bg-blue-lt ms-auto" title="Vulnérabilité(s) en cours de traitement"><i class="ti ti-progress me-1"></i>En cours{% if _v_ip.count < g.total_vulns %} {{ _v_ip.count }}/{{ g.total_vulns }}{% endif %}</span>{% endif %}
+          {% if _v_ip.count %}<span class="badge bg-blue-lt ms-auto synth-vendor-ip-badge" title="Vulnérabilité(s) en cours de traitement"><i class="ti ti-progress me-1"></i>En cours{% if _v_ip.count < g.total_vulns %} {{ _v_ip.count }}/{{ g.total_vulns }}{% endif %}</span>{% endif %}
         </div>
         <div class="synth-vendor-col text-secondary synth-vendor-vulns">{{ g.total_vulns }}</div>
         <div class="synth-vendor-col text-secondary synth-vendor-products">{{ g.products|length }}</div>
@@ -319,7 +319,7 @@
                 <i class="ti ti-package text-secondary me-1" style="font-size:0.8rem"></i>
                 {% endif %}
                 <span class="text-truncate">{{ p.product }}</span>
-                {% if _ip_count %}<span class="badge bg-blue-lt ms-auto" title="Vulnérabilité(s) en cours de traitement"><i class="ti ti-progress me-1"></i>En cours{% if _ip_count < p.vulns|length %} {{ _ip_count }}/{{ p.vulns|length }}{% endif %}</span>{% endif %}
+                {% if _ip_count %}<span class="badge bg-blue-lt ms-auto synth-ip-badge" title="Vulnérabilité(s) en cours de traitement"><i class="ti ti-progress me-1"></i>En cours{% if _ip_count < p.vulns|length %} {{ _ip_count }}/{{ p.vulns|length }}{% endif %}</span>{% endif %}
               </div>
             </td>
             <td class="col-num text-secondary">{{ p.vulns|length }}</td>
