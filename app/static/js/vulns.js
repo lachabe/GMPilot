@@ -252,10 +252,13 @@ function applySynthFilters() {
       const matchHost = !hostFilter || hosts.split(',').some(function(h) {
         return h.trim().split(':')[0] === hostFilter;
       });
-      const inProg = parseInt(tr.dataset.inprogress || '0', 10);
+      const totalV = parseInt(tr.dataset.vulns || '0', 10);
+      const inProg = parseInt(tr.dataset.inprogress || '0', 10);   // vulns non-active (« traitées »)
+      // Un produit correspond si au moins UNE de ses vulns correspond au statut :
+      // « en cours » → ≥1 non-active ; « sans traitement » → ≥1 active.
       const matchStatus = !statusF
         || (statusF === 'in_progress' && inProg > 0)
-        || (statusF === 'untreated' && inProg === 0);
+        || (statusF === 'untreated' && (totalV - inProg) > 0);
       const sev = parseFloat(tr.dataset.sev) || 0;
       const matchSev = (sevMin === null || sev >= sevMin) && (sevMax === null || sev <= sevMax);
       const matchExploited = !exploitedOnly || (parseInt(tr.dataset.exploited || '0', 10) > 0);
@@ -268,10 +271,26 @@ function applySynthFilters() {
               && matchExploited;
       const detail = tr.nextElementSibling;
       tr.style.display = ok ? '' : 'none';
+      // Filtrage au niveau des vulns individuelles : un produit mixte (avec/sans
+      // ticket) reste visible mais n'affiche que les vulns du statut demandé. Le
+      // compteur reflète les vulns effectivement visibles.
+      let shownV = totalV;
       if (detail && detail.classList.contains('synth-product-detail')) {
-        if (!ok) detail.style.display = 'none';
+        if (!ok) {
+          detail.style.display = 'none';
+        } else if (statusF) {
+          shownV = 0;
+          detail.querySelectorAll('.synth-vuln-row').forEach(function (vr) {
+            const vs = vr.dataset.status || 'active';
+            const rowOk = (statusF === 'in_progress') ? (vs !== 'active') : (vs === 'active');
+            vr.style.display = rowOk ? '' : 'none';
+            if (rowOk) shownV++;
+          });
+        } else {
+          detail.querySelectorAll('.synth-vuln-row').forEach(function (vr) { vr.style.display = ''; });
+        }
       }
-      if (ok) { vProducts++; vVulns += parseInt(tr.dataset.vulns || '0', 10); }
+      if (ok) { vProducts++; vVulns += shownV; }
     });
     vg.style.display = vProducts > 0 ? '' : 'none';
 

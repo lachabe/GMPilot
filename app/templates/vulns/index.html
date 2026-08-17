@@ -399,6 +399,7 @@
                   {% for v in p.vulns %}
                   <tr class="synth-vuln-row"
                       data-vuln-id="{{ v.id }}"
+                      data-status="{{ v.status }}"
                       data-host="{{ v.host | e }}"
                       data-hostname="{{ v.hostname | e }}"
                       data-port="{{ v.port | e }}">
