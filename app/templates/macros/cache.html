@@ -1,0 +1,19 @@
+{% macro cache_banner(meta) %}
+  <div class="alert alert-info py-1 px-3 mb-3 d-flex align-items-center" style="font-size:.75rem">
+    <i class="ti ti-database me-2"></i>
+    {% if meta.exists %}
+      {% set tok = meta.threshold_ok|default(60) %}
+      {% set twarn = meta.threshold_warn|default(1440) %}
+      Données du <strong class="mx-1">{{ meta.date[:19] }}</strong>
+      {% if meta.age_minutes < tok %}
+        <span class="badge bg-green-lt ms-2">À jour</span>
+      {% elif meta.age_minutes < twarn %}
+        <span class="badge bg-yellow-lt ms-2">{{ meta.age_minutes // 60 }}h</span>
+      {% else %}
+        <span class="badge bg-red-lt ms-2">{{ meta.age_minutes // 1440 }}j — pensez à rafraîchir</span>
+      {% endif %}
+    {% else %}
+      <span class="text-warning">Données absentes — <a href="{{ url_for('cache.index') }}">rafraîchir depuis la synchronisation</a></span>
+    {% endif %}
+  </div>
+{% endmacro %}

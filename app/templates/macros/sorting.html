@@ -1,0 +1,14 @@
+{% macro sortable_header(label, field, sort_field, sort_order) %}
+<th class="sort-th" data-field="{{ field }}" style="cursor:pointer;white-space:nowrap;user-select:none" title="Trier par {{ label }}">
+  {{ label }}
+  {% if sort_field == field %}
+    {% if sort_order == 'asc' %}
+      <i class="ti ti-sort-ascending" style="color:var(--tblr-primary)"></i>
+    {% else %}
+      <i class="ti ti-sort-descending" style="color:var(--tblr-primary)"></i>
+    {% endif %}
+  {% else %}
+    <i class="ti ti-arrows-sort" style="opacity:.3"></i>
+  {% endif %}
+</th>
+{% endmacro %}

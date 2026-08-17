@@ -1,0 +1,67 @@
+{# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+{% extends "base.html" %}
+{% block title %}{{ host.name }}{% endblock %}
+{% block breadcrumb_content %}Hôtes — {{ host.name }}{% endblock %}
+{% block page_actions %}<a href="{{ url_for('assets.hosts') }}" class="btn btn-ghost-secondary btn-sm"><i class="ti ti-arrow-left me-1"></i>Retour</a>{% endblock %}
+
+{% block content %}
+<div class="mb-3 text-secondary">
+  Dernière vue : {{ (host.last_seen or '—')[:16] }} ·
+  {% set sev = host.severity|float %}
+  {% if sev >= 7 %}<span class="sev-high">Sévérité {{ "%.1f"|format(sev) }}</span>
+  {% elif sev >= 4 %}<span class="sev-medium">Sévérité {{ "%.1f"|format(sev) }}</span>
+  {% elif sev > 0 %}<span class="sev-low">Sévérité {{ "%.1f"|format(sev) }}</span>
+  {% else %}<span class="text-secondary">Sévérité 0.0</span>{% endif %}
+</div>
+
+<div class="row row-cards mb-3">
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title"><i class="ti ti-id me-2"></i>Identifiants</h3></div>
+      {% if host.identifiers %}
+      <div class="table-responsive">
+        <table class="table table-vcenter card-table table-sm">
+          <thead><tr><th>Type</th><th>Valeur</th><th>Source</th></tr></thead>
+          <tbody>
+            {% for i in host.identifiers %}
+            <tr><td><span class="badge bg-secondary-lt">{{ i.name }}</span></td><td><code>{{ i.value }}</code></td><td class="text-secondary">{{ i.source }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}<div class="card-body text-secondary small">Aucun identifiant</div>{% endif %}
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title"><i class="ti ti-stack-2 me-2"></i>Système d'exploitation</h3></div>
+      <div class="card-body">
+        <div class="mb-2"><div class="text-secondary small">OS détecté</div><div class="fw-medium">{{ host.os }}</div></div>
+        <div><div class="text-secondary small">CPE</div><code class="small">{{ host.os_cpe }}</code></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if host.details %}
+<div class="card mb-3">
+  <div class="card-header"><h3 class="card-title"><i class="ti ti-database me-2"></i>Détails techniques</h3></div>
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table table-sm">
+      <thead><tr><th>Clé</th><th>Valeur</th></tr></thead>
+      <tbody>
+        {% for k, v in host.details.items() %}
+        <tr><td><code class="small text-secondary">{{ k }}</code></td><td>{{ v or '—' }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<form method="POST" action="{{ url_for('assets.delete_host', host_id=host.id) }}"
+      onsubmit="return confirm('Supprimer définitivement cet hôte ?')">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+  <button type="submit" class="btn btn-danger"><i class="ti ti-trash me-1"></i>Supprimer l'asset</button>
+</form>
+{% endblock %}

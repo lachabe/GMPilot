@@ -1,0 +1,40 @@
+{# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+{% extends "base.html" %}
+{% from "macros/cache.html" import cache_banner %}
+{% from "macros/pagination.html" import paginate %}
+{% block title %}Planifications{% endblock %}
+{% block breadcrumb_content %}Planifications{% endblock %}
+
+{% block content %}
+{{ cache_banner(cache_meta("schedules")) }}
+<div class="card">
+  {% if schedules %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead><tr><th>Nom</th><th>Prochaine exécution</th><th>Fréquence</th><th>Fuseau</th><th>Tâches</th><th class="w-1"></th></tr></thead>
+      <tbody>
+        {% for s in schedules %}
+        <tr>
+          <td class="fw-medium"><i class="ti ti-calendar-clock text-cyan me-1"></i>{{ s.name }}</td>
+          <td>{% if s.next_time and s.next_time != "—" %}<code class="small">{{ s.next_time }}</code>{% else %}<span class="text-secondary">Non défini</span>{% endif %}</td>
+          <td><span class="badge bg-secondary-lt">{{ s.frequency }}</span></td>
+          <td class="text-secondary">{{ s.timezone }}</td>
+          <td><span class="badge bg-cyan-lt">{{ s.tasks }}</span></td>
+          <td><div class="d-flex gap-1">
+            <a href="{{ url_for('schedules.edit', schedule_id=s.id) }}" class="btn btn-ghost-secondary btn-icon btn-sm"><i class="ti ti-edit"></i></a>
+            <form method="POST" action="{{ url_for('schedules.delete', schedule_id=s.id) }}" class="d-inline" onsubmit="return confirm('Supprimer ?')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+              <button type="submit" class="btn btn-ghost-danger btn-icon btn-sm"><i class="ti ti-trash"></i></button>
+            </form>
+          </div></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ paginate(schedules, page, per_page, total, 'schedules.index') }}
+  {% else %}
+  <div class="card-body"><div class="empty"><div class="empty-icon"><i class="ti ti-calendar-clock"></i></div><p class="empty-title">Aucune planification</p></div></div>
+  {% endif %}
+</div>
+{% endblock %}

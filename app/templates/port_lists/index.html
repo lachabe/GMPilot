@@ -1,0 +1,36 @@
+{# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+{% extends "base.html" %}
+{% from "macros/cache.html" import cache_banner %}
+{% block title %}Listes de ports{% endblock %}
+{% block breadcrumb_content %}Listes de ports{% endblock %}
+{% block content %}
+{{ cache_banner(cache_meta("port_lists")) }}
+<div class="card">
+  {% if port_lists %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead><tr><th>Nom</th><th>Total</th><th>TCP</th><th>UDP</th><th>Commentaire</th><th class="w-1"></th></tr></thead>
+      <tbody>
+        {% for p in port_lists %}
+        <tr>
+          <td class="fw-medium"><i class="ti ti-network text-cyan me-1"></i>{{ p.name }}</td>
+          <td><span class="badge bg-cyan-lt">{{ p.all }}</span></td>
+          <td class="text-secondary">{{ p.tcp }}</td>
+          <td class="text-secondary">{{ p.udp }}</td>
+          <td class="text-secondary">{{ p.comment or "—" }}</td>
+          <td>
+            <form method="POST" action="{{ url_for('port_lists.delete', pl_id=p.id) }}" class="d-inline" onsubmit="return confirm('Supprimer ?')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+              <button type="submit" class="btn btn-ghost-danger btn-icon btn-sm"><i class="ti ti-trash"></i></button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card-body"><div class="empty"><div class="empty-icon"><i class="ti ti-network"></i></div><p class="empty-title">Aucune liste de ports</p></div></div>
+  {% endif %}
+</div>
+{% endblock %}

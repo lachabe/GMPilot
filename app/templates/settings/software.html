@@ -1,0 +1,400 @@
+{% extends "base.html" %}
+{% block title %}Surveillance logicielle — {{ APP_NAME }}{% endblock %}
+{% block breadcrumb_content %}Surveillance logicielle{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+
+    {# ── Formulaire d'ajout ──────────────────────────────────────────── #}
+    <div class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title"><i class="ti ti-plus me-2"></i>Ajouter un logiciel à surveiller</h3>
+      </div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('settings.software_add') }}" id="form-add-software">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+          <div class="row g-3 align-items-end">
+
+            <div class="col-sm-6 col-lg-2">
+              <label class="form-label">Type</label>
+              <select id="sw-type" name="cpe_type" class="form-select form-select-sm">
+                {% for k, v in cpe_types.items() %}
+                <option value="{{ k }}">{{ v }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-sm-6 col-lg-2">
+              <label class="form-label">Vendor</label>
+              <input type="text" id="sw-vendor-search" class="form-control form-control-sm" placeholder="Rechercher un éditeur..." autocomplete="off">
+              <select id="sw-vendor" name="vendor" class="form-select form-select-sm mt-1 d-none">
+                <option value="">— sélectionner —</option>
+              </select>
+            </div>
+
+            <div class="col-sm-6 col-lg-3">
+              <label class="form-label">Produit</label>
+              <select id="sw-product" name="product" class="form-select form-select-sm" disabled>
+                <option value="">— sélectionner —</option>
+              </select>
+            </div>
+
+            <div class="col-sm-6 col-lg-2">
+              <label class="form-label">Version <span class="text-secondary">(opt.)</span></label>
+              <select id="sw-version" class="form-select form-select-sm" disabled>
+                <option value="">Toutes</option>
+              </select>
+              <input type="text" id="sw-version-custom" class="form-control form-control-sm mt-1 d-none" placeholder="ex : 10.0.23">
+              <input type="hidden" name="version" id="sw-version-hidden">
+            </div>
+
+            <div class="col-sm-6 col-lg-2">
+              <label class="form-label">Hôte <span class="text-secondary">(opt.)</span></label>
+              <input type="text" name="host_ip" class="form-control form-control-sm" placeholder="IP ou hostname">
+            </div>
+
+            <div class="col-sm-6 col-lg-2">
+              <button type="submit" id="btn-add-sw" class="btn btn-primary btn-sm w-100" disabled>
+                <i class="ti ti-plus me-1"></i>Ajouter
+              </button>
+            </div>
+          </div>
+
+          <div class="row mt-2">
+            <div class="col">
+              <input type="text" name="comment" class="form-control form-control-sm" placeholder="Commentaire (optionnel)">
+            </div>
+          </div>
+
+          <div id="sw-loading" class="text-secondary small mt-2 d-none">
+            <div class="spinner-border spinner-border-sm me-1" role="status"></div>
+            <span id="sw-loading-text">Recherche en cours...</span>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    {# ── Tableau des logiciels surveillés ─────────────────────────────── #}
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title"><i class="ti ti-eye me-2"></i>Logiciels surveillés</h3>
+        <div class="card-actions">
+          <span class="badge bg-cyan-lt">{{ items|length }}</span>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-vcenter card-table table-sm">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Vendor</th>
+              <th>Produit</th>
+              <th>Version</th>
+              <th>Hôte</th>
+              <th>Commentaire</th>
+              <th>Ajouté le</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in items %}
+            <tr>
+              <td>
+                {% if item.cpe_type == 'a' %}<span class="badge bg-cyan-lt">App</span>
+                {% elif item.cpe_type == 'o' %}<span class="badge bg-purple-lt">OS</span>
+                {% else %}<span class="badge bg-orange-lt">HW</span>{% endif %}
+              </td>
+              <td class="fw-medium">{{ item.vendor }}</td>
+              <td>{{ item.product }}</td>
+              <td>{{ item.version or '—' }}</td>
+              <td><code class="small">{{ item.host_ip or '—' }}</code></td>
+              <td class="text-secondary small text-truncate" style="max-width:150px">{{ item.comment or '' }}</td>
+              <td class="text-secondary small">{{ item.created_at[:10] }}</td>
+              <td class="text-nowrap">
+                <button type="button" class="btn btn-ghost-cyan btn-sm btn-icon btn-edit-sw" title="Modifier"
+                        data-bs-toggle="modal" data-bs-target="#modal-edit-sw"
+                        data-id="{{ item.id }}" data-vendor="{{ item.vendor }}" data-product="{{ item.product }}"
+                        data-cpe-type="{{ item.cpe_type }}" data-version="{{ item.version or '' }}"
+                        data-host="{{ item.host_ip or '' }}" data-comment="{{ item.comment or '' }}">
+                  <i class="ti ti-pencil"></i>
+                </button>
+                <form method="POST" action="{{ url_for('settings.software_delete', item_id=item.id) }}" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                  <button type="submit" class="btn btn-ghost-danger btn-sm btn-icon" title="Supprimer"
+                          onclick="return confirm('Supprimer ce logiciel de la surveillance ?')">
+                    <i class="ti ti-trash"></i>
+                  </button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+            {% if not items %}
+            <tr><td colspan="8" class="text-center text-secondary py-4">Aucun logiciel surveillé</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+{# ── Modale d'édition ───────────────────────────────────────────────────── #}
+<div class="modal modal-blur fade" id="modal-edit-sw" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="POST" id="form-edit-sw">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+        <div class="modal-header">
+          <h5 class="modal-title">Modifier un logiciel</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Vendor</label>
+            <input type="text" class="form-control" id="edit-vendor" disabled>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Produit</label>
+            <input type="text" class="form-control" id="edit-product" disabled>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Version</label>
+            <select id="edit-version" class="form-select">
+              <option value="">Toutes</option>
+            </select>
+            <input type="text" id="edit-version-custom" class="form-control mt-1 d-none" placeholder="ex : 10.0.23">
+            <input type="hidden" name="version" id="edit-version-hidden">
+            <div id="edit-version-loading" class="text-secondary small mt-1 d-none">
+              <div class="spinner-border spinner-border-sm me-1" role="status"></div>
+              Chargement des versions...
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Hôte</label>
+            <input type="text" name="host_ip" id="edit-host" class="form-control" placeholder="IP ou hostname">
+          </div>
+          <div class="mb-0">
+            <label class="form-label">Commentaire</label>
+            <input type="text" name="comment" id="edit-comment" class="form-control" placeholder="">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost-secondary" data-bs-dismiss="modal">Annuler</button>
+          <button type="submit" class="btn btn-primary"><i class="ti ti-device-floppy me-1"></i>Sauvegarder</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function() {
+  const typeSelect = document.getElementById('sw-type');
+  const vendorSearch = document.getElementById('sw-vendor-search');
+  const vendorSelect = document.getElementById('sw-vendor');
+  const productSelect = document.getElementById('sw-product');
+  const versionSelect = document.getElementById('sw-version');
+  const versionCustom = document.getElementById('sw-version-custom');
+  const versionHidden = document.getElementById('sw-version-hidden');
+  const btnAdd = document.getElementById('btn-add-sw');
+  const loading = document.getElementById('sw-loading');
+  const loadingText = document.getElementById('sw-loading-text');
+
+  let searchTimeout = null;
+
+  function showLoading(msg) { loadingText.textContent = msg; loading.classList.remove('d-none'); }
+  function hideLoading() { loading.classList.add('d-none'); }
+
+  function resetFrom(level) {
+    if (level <= 1) {
+      vendorSelect.innerHTML = '<option value="">— sélectionner —</option>';
+      vendorSelect.classList.add('d-none');
+    }
+    if (level <= 2) { productSelect.innerHTML = '<option value="">— sélectionner —</option>'; productSelect.disabled = true; }
+    if (level <= 3) {
+      versionSelect.innerHTML = '<option value="">Toutes</option>';
+      versionSelect.disabled = true;
+      versionCustom.classList.add('d-none');
+      versionCustom.value = '';
+      versionHidden.value = '';
+    }
+    btnAdd.disabled = true;
+  }
+
+  function updateAddBtn() {
+    btnAdd.disabled = !(vendorSelect.value && productSelect.value);
+  }
+
+  // Recherche vendor
+  vendorSearch.addEventListener('input', function() {
+    clearTimeout(searchTimeout);
+    const q = vendorSearch.value.trim();
+    if (q.length < 2) { resetFrom(1); return; }
+    searchTimeout = setTimeout(function() {
+      showLoading('Recherche vendors...');
+      fetch('{{ url_for("settings.cpe_vendors") }}?type=' + typeSelect.value + '&q=' + encodeURIComponent(q))
+        .then(r => r.json())
+        .then(vendors => {
+          hideLoading();
+          vendorSelect.innerHTML = '<option value="">— sélectionner —</option>';
+          vendors.forEach(v => {
+            const opt = document.createElement('option');
+            opt.value = v; opt.textContent = v;
+            vendorSelect.appendChild(opt);
+          });
+          if (vendors.length > 0) {
+            vendorSelect.classList.remove('d-none');
+          } else {
+            vendorSelect.classList.add('d-none');
+          }
+          resetFrom(2);
+        })
+        .catch(() => hideLoading());
+    }, 400);
+  });
+
+  // Type change → reset
+  typeSelect.addEventListener('change', function() { vendorSearch.value = ''; resetFrom(1); });
+
+  // Vendor sélectionné → charger products
+  vendorSelect.addEventListener('change', function() {
+    resetFrom(2);
+    if (!vendorSelect.value) return;
+    showLoading('Chargement produits...');
+    fetch('{{ url_for("settings.cpe_products") }}?type=' + typeSelect.value + '&vendor=' + encodeURIComponent(vendorSelect.value))
+      .then(r => r.json())
+      .then(products => {
+        hideLoading();
+        productSelect.innerHTML = '<option value="">— sélectionner —</option>';
+        products.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p; opt.textContent = p;
+          productSelect.appendChild(opt);
+        });
+        productSelect.disabled = products.length === 0;
+      })
+      .catch(() => hideLoading());
+  });
+
+  // Product sélectionné → charger versions
+  productSelect.addEventListener('change', function() {
+    resetFrom(3);
+    updateAddBtn();
+    if (!productSelect.value) return;
+    showLoading('Chargement versions...');
+    fetch('{{ url_for("settings.cpe_versions") }}?type=' + typeSelect.value + '&vendor=' + encodeURIComponent(vendorSelect.value) + '&product=' + encodeURIComponent(productSelect.value))
+      .then(r => r.json())
+      .then(versions => {
+        hideLoading();
+        versionSelect.innerHTML = '<option value="">Toutes</option>';
+        versions.forEach(v => {
+          const opt = document.createElement('option');
+          opt.value = v; opt.textContent = v;
+          versionSelect.appendChild(opt);
+        });
+        const otherOpt = document.createElement('option');
+        otherOpt.value = '__other__'; otherOpt.textContent = 'Autre...';
+        versionSelect.appendChild(otherOpt);
+        versionSelect.disabled = false;
+      })
+      .catch(() => hideLoading());
+  });
+
+  versionSelect.addEventListener('change', function() {
+    if (versionSelect.value === '__other__') {
+      versionCustom.classList.remove('d-none');
+      versionCustom.focus();
+      versionHidden.value = versionCustom.value;
+    } else {
+      versionCustom.classList.add('d-none');
+      versionHidden.value = versionSelect.value;
+    }
+    updateAddBtn();
+  });
+
+  versionCustom.addEventListener('input', function() {
+    versionHidden.value = versionCustom.value;
+  });
+  // ── Modale d'édition ─────────────────────────────────────────────────
+  var modalEl = document.getElementById('modal-edit-sw');
+  if (modalEl) {
+    var editVersion = document.getElementById('edit-version');
+    var editVersionCustom = document.getElementById('edit-version-custom');
+    var editVersionHidden = document.getElementById('edit-version-hidden');
+    var editVersionLoading = document.getElementById('edit-version-loading');
+
+    editVersion.addEventListener('change', function() {
+      if (editVersion.value === '__other__') {
+        editVersionCustom.classList.remove('d-none');
+        editVersionCustom.focus();
+        editVersionHidden.value = editVersionCustom.value;
+      } else {
+        editVersionCustom.classList.add('d-none');
+        editVersionHidden.value = editVersion.value;
+      }
+    });
+
+    editVersionCustom.addEventListener('input', function() {
+      editVersionHidden.value = editVersionCustom.value;
+    });
+
+    modalEl.addEventListener('show.bs.modal', function(event) {
+      var btn = event.relatedTarget;
+      if (!btn) return;
+
+      var id = btn.dataset.id;
+      var vendor = btn.dataset.vendor;
+      var product = btn.dataset.product;
+      var cpeType = btn.dataset.cpeType;
+      var currentVersion = btn.dataset.version;
+
+      document.getElementById('form-edit-sw').action =
+        '{{ url_for("settings.software_edit", item_id=0) }}'.replace('/0', '/' + id);
+      document.getElementById('edit-vendor').value = vendor;
+      document.getElementById('edit-product').value = product;
+      document.getElementById('edit-host').value = btn.dataset.host;
+      document.getElementById('edit-comment').value = btn.dataset.comment;
+
+      editVersion.innerHTML = '<option value="">Toutes</option>';
+      editVersionCustom.classList.add('d-none');
+      editVersionCustom.value = '';
+      editVersionHidden.value = '';
+      editVersionLoading.classList.remove('d-none');
+
+      fetch('{{ url_for("settings.cpe_versions") }}?type=' + cpeType + '&vendor=' + encodeURIComponent(vendor) + '&product=' + encodeURIComponent(product))
+        .then(function(r) { return r.json(); })
+        .then(function(versions) {
+          editVersionLoading.classList.add('d-none');
+          editVersion.innerHTML = '<option value="">Toutes</option>';
+          versions.forEach(function(v) {
+            var opt = document.createElement('option');
+            opt.value = v; opt.textContent = v;
+            editVersion.appendChild(opt);
+          });
+          var otherOpt = document.createElement('option');
+          otherOpt.value = '__other__'; otherOpt.textContent = 'Autre...';
+          editVersion.appendChild(otherOpt);
+
+          if (currentVersion && versions.includes(currentVersion)) {
+            editVersion.value = currentVersion;
+            editVersionHidden.value = currentVersion;
+          } else if (currentVersion) {
+            editVersion.value = '__other__';
+            editVersionCustom.value = currentVersion;
+            editVersionCustom.classList.remove('d-none');
+            editVersionHidden.value = currentVersion;
+          } else {
+            editVersion.value = '';
+            editVersionHidden.value = '';
+          }
+        })
+        .catch(function() { editVersionLoading.classList.add('d-none'); });
+    });
+  }
+})();
+</script>
+{% endblock %}

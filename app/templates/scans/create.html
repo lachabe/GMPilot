@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Nouvelle tâche{% endblock %}
+{% block breadcrumb_content %}Nouvelle tâche de scan{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('scans.index') }}" class="btn btn-ghost-secondary btn-sm">
+  <i class="ti ti-arrow-left me-1"></i>Retour
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8 col-xl-6">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title"><i class="ti ti-radar-2 me-2"></i>Paramètres de la tâche</h3>
+      </div>
+      <div class="card-body">
+        <form method="POST">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+          <div class="mb-3">
+            <label class="form-label required">Nom de la tâche</label>
+            <input type="text" name="name" class="form-control" placeholder="ex: Scan réseau interne" required/>
+          </div>
+          <div class="mb-3">
+            <label class="form-label required">Cible</label>
+            <select name="target_id" class="form-select" required>
+              <option value="">— Sélectionner une cible —</option>
+              {% for t in targets %}
+              <option value="{{ t.id }}">{{ t.name }} — {{ t.hosts }}</option>
+              {% endfor %}
+            </select>
+            {% if not targets %}
+            <div class="small text-warning mt-1">
+              <i class="ti ti-alert-triangle me-1"></i>
+              Aucune cible disponible.
+              <a href="{{ url_for('targets.create') }}">Créer une cible</a>
+            </div>
+            {% endif %}
+          </div>
+          <div class="mb-3">
+            <label class="form-label required">Configuration de scan</label>
+            <select name="config_id" class="form-select" required>
+              <option value="">— Sélectionner —</option>
+              {% for c in configs %}
+              <option value="{{ c.id }}">{{ c.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Commentaire</label>
+            <textarea name="comment" class="form-control" rows="3" placeholder="Notes optionnelles…"></textarea>
+          </div>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">
+              <i class="ti ti-plus me-1"></i>Créer la tâche
+            </button>
+            <a href="{{ url_for('scans.index') }}" class="btn btn-ghost-secondary">Annuler</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

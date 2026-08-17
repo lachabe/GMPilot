@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Configuration du scoring{% endblock %}
+{% block breadcrumb_content %}Administration — Scoring{% endblock %}
+
+
+{% block content %}
+<div class="d-flex align-items-center mb-3 gap-2">
+  <div>
+    <h2 class="mb-0">Configuration du scoring</h2>
+    <small class="text-secondary">{{ scoring_name }}</small>
+  </div>
+  {% if has_perm("settings.scoring_edit") %}
+  <div class="ms-auto d-flex gap-2">
+    <button class="btn btn-ghost-secondary btn-sm" id="btn-preview">
+      <i class="ti ti-eye me-1"></i>Prévisualiser
+    </button>
+    <button class="btn btn-primary btn-sm" id="btn-save">
+      <i class="ti ti-device-floppy me-1"></i>Enregistrer
+    </button>
+  </div>
+  {% endif %}
+</div>
+
+<div class="row g-3">
+
+  <!-- ── Colonne gauche : Critères ── -->
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header d-flex align-items-center gap-2">
+        <h3 class="card-title mb-0">Critères</h3>
+        {% if has_perm("settings.scoring_edit") %}
+        <button class="btn btn-ghost-primary btn-sm ms-auto" id="btn-add-criterion">
+          <i class="ti ti-plus me-1"></i>Ajouter
+        </button>
+        {% endif %}
+      </div>
+      <div class="card-body p-2" id="criteria-container">
+        <!-- Rempli par JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Colonne droite : Formule + Préview ── -->
+  <div class="col-lg-5">
+
+    <!-- Formule -->
+    <div class="card mb-3">
+      <div class="card-header d-flex align-items-center gap-2">
+        <h3 class="card-title mb-0">Formule</h3>
+        {% if has_perm("settings.scoring_edit") %}
+        <button class="btn btn-ghost-secondary btn-sm ms-auto" id="btn-auto-formula" title="Régénérer depuis les critères">
+          <i class="ti ti-refresh me-1"></i>Auto
+        </button>
+        <button class="btn btn-ghost-secondary btn-sm" id="btn-validate-formula" title="Valider la syntaxe">
+          <i class="ti ti-check me-1"></i>Valider
+        </button>
+        {% endif %}
+      </div>
+      <div class="card-body">
+        <textarea id="formula-input" class="form-control formula-input" rows="3"
+                  {% if not has_perm("settings.scoring_edit") %}readonly{% endif %}>{{ formula }}</textarea>
+        <div id="formula-status" class="formula-status text-secondary mt-1">
+          Poids total actuel : {{ total_weight }}
+        </div>
+        <div class="mt-2 text-secondary" style="font-size:.72rem">
+          Utilisez <code>{id_critère}</code> pour référencer un critère. Résultat entre 0 et 100.
+        </div>
+      </div>
+    </div>
+
+    <!-- Prévisualisation -->
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title mb-0">Prévisualisation <small class="text-secondary ms-1">(5 vulns)</small></h3>
+      </div>
+      <div class="card-body p-0" id="preview-container">
+        <div class="p-3 text-secondary small">Cliquez sur "Prévisualiser" pour calculer les scores avec la config courante.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Triggers cachés pour Bootstrap modal -->
+<button id="criterionModalTrigger" class="d-none" data-bs-toggle="modal" data-bs-target="#criterionModal"></button>
+
+<!-- Modal ajout/édition critère -->
+<div class="modal modal-blur fade" id="criterionModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="criterionModalTitle">Nouveau critère</h5>
+        <button type="button" id="criterionModalClose" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label required">ID <small class="text-secondary">(unique, pas d'espaces)</small></label>
+            <input type="text" id="c-id" class="form-control form-control-sm" placeholder="ex: exposition"/>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label required">Label</label>
+            <input type="text" id="c-label" class="form-control form-control-sm" placeholder="ex: Exposition publique"/>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label required">Poids</label>
+            <input type="number" id="c-weight" class="form-control form-control-sm" value="1" min="0" step="1"/>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label required">Source</label>
+            <select id="c-source" class="form-select form-select-sm" onchange="updateSourceUI()">
+              <option value="severity">severity — Score CVSS</option>
+              <option value="epss">epss — Score EPSS</option>
+              <option value="qod">qod — Quality of Detection</option>
+              <option value="kev">kev — Catalogue KEV</option>
+              <option value="anssi">anssi — CERT-FR ANSSI</option>
+              <option value="host_tag">host_tag — Tag hôte GVM</option>
+            </select>
+          </div>
+          <div class="col-md-6" id="c-normalize-row">
+            <label class="form-label">Normalisation</label>
+            <select id="c-normalize" class="form-select form-select-sm">
+              <option value="scale_0_1">Échelle 0-1 (linéaire)</option>
+              <option value="threshold">Seuils personnalisés</option>
+            </select>
+          </div>
+          <div class="col-12" id="c-tag-row" style="display:none">
+            <label class="form-label required">Nom du tag GVM</label>
+            <input type="text" id="c-tag-name" class="form-control form-control-sm" placeholder="ex: host:exposed"/>
+          </div>
+          <div class="col-12" id="c-description-row">
+            <label class="form-label">Description</label>
+            <input type="text" id="c-description" class="form-control form-control-sm"/>
+          </div>
+          <!-- Valeurs -->
+          <div class="col-12">
+            <label class="form-label">Règles de valeur</label>
+            <div id="c-values-container"></div>
+            <div id="c-values-help" class="text-secondary mt-1" style="font-size:.75rem"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+        <button type="button" class="btn btn-primary" id="btn-save-criterion">Ajouter</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<div id="gmpilot-scoring-config"
+     data-can-edit="{{ 'true' if has_perm('settings.scoring_edit') else 'false' }}"
+     data-scoring-name="{{ scoring_name | e }}"
+     data-preview-url="{{ url_for('settings.scoring_preview') }}"
+     data-save-url="{{ url_for('settings.scoring_save') }}"
+     data-validate-url="{{ url_for('settings.scoring_validate_formula') }}"
+     data-auto-formula-url="{{ url_for('settings.scoring_auto_formula') }}"></div>
+<script type="application/json" id="gmpilot-scoring-criteria">{{ criteria | tojson }}</script>
+<script type="application/json" id="gmpilot-scoring-formula">{{ formula | tojson }}</script>
+<script src="{{ url_for('static', filename='js/scoring.js') }}"></script>
+{% endblock extra_scripts %}

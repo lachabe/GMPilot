@@ -1,0 +1,43 @@
+{# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+{% extends "base.html" %}
+{% from "macros/cache.html" import cache_banner %}
+{% from "macros/pagination.html" import paginate %}
+{% block title %}Tags{% endblock %}
+{% block breadcrumb_content %}Tags{% endblock %}
+{% block page_actions %}<a href="{{ url_for('tags.create') }}" class="btn btn-primary btn-sm"><i class="ti ti-plus me-1"></i>Nouveau tag</a>{% endblock %}
+
+{% block content %}
+{{ cache_banner(cache_meta("tags")) }}
+<div class="card">
+  {% if tags %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead><tr><th>Nom</th><th>Valeur</th><th>Type</th><th>Ressources</th><th>Commentaire</th><th class="w-1"></th></tr></thead>
+      <tbody>
+        {% for t in tags %}
+        <tr>
+          <td class="fw-medium"><i class="ti ti-tag text-cyan me-1"></i>{{ t.name }}</td>
+          <td>{% if t.value %}<code>{{ t.value }}</code>{% else %}<span class="text-secondary">—</span>{% endif %}</td>
+          <td>{% if t.resource_type %}<span class="badge bg-secondary-lt">{{ t.resource_type }}</span>{% else %}—{% endif %}</td>
+          <td><span class="badge bg-cyan-lt">{{ t.resources_count }}</span></td>
+          <td class="text-secondary">{{ t.comment or "—" }}</td>
+          <td>
+            <div class="d-flex gap-1">
+              <a href="{{ url_for('tags.edit', tag_id=t.id) }}" class="btn btn-ghost-secondary btn-icon btn-sm"><i class="ti ti-edit"></i></a>
+              <form method="POST" action="{{ url_for('tags.delete', tag_id=t.id) }}" class="d-inline" onsubmit="return confirm('Supprimer ?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button type="submit" class="btn btn-ghost-danger btn-icon btn-sm"><i class="ti ti-trash"></i></button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ paginate(tags, page, per_page, total, 'tags.index') }}
+  {% else %}
+  <div class="card-body"><div class="empty"><div class="empty-icon"><i class="ti ti-tags"></i></div><p class="empty-title">Aucun tag</p><p class="empty-subtitle text-secondary"><a href="{{ url_for('tags.create') }}">Créer le premier tag</a></p></div></div>
+  {% endif %}
+</div>
+{% endblock %}

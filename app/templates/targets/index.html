@@ -1,0 +1,40 @@
+{# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+{% extends "base.html" %}
+{% from "macros/cache.html" import cache_banner %}
+{% from "macros/pagination.html" import paginate %}
+{% block title %}Cibles{% endblock %}
+{% block breadcrumb_content %}Cibles{% endblock %}
+{% block page_actions %}<a href="{{ url_for('targets.create') }}" class="btn btn-primary btn-sm"><i class="ti ti-plus me-1"></i>Nouvelle cible</a>{% endblock %}
+
+{% block content %}
+{{ cache_banner(cache_meta("targets")) }}
+<div class="card">
+  {% if targets %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead><tr><th>Nom</th><th>Hôtes / Plage</th><th>Liste de ports</th><th>Commentaire</th><th>Créé le</th><th class="w-1"></th></tr></thead>
+      <tbody>
+        {% for t in targets %}
+        <tr>
+          <td class="fw-medium"><i class="ti ti-target text-cyan me-1"></i>{{ t.name }}</td>
+          <td><code>{{ t.hosts }}</code></td>
+          <td class="text-secondary">{{ t.port_list_name }}</td>
+          <td class="text-secondary">{{ t.comment or "—" }}</td>
+          <td class="text-secondary">{{ (t.creation_time or "—")[:10] }}</td>
+          <td>
+            <form method="POST" action="{{ url_for('targets.delete', target_id=t.id) }}" class="d-inline" onsubmit="return confirm('Supprimer ?')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+              <button type="submit" class="btn btn-ghost-danger btn-icon btn-sm"><i class="ti ti-trash"></i></button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ paginate(targets, page, per_page, total, 'targets.index') }}
+  {% else %}
+  <div class="card-body"><div class="empty"><div class="empty-icon"><i class="ti ti-target"></i></div><p class="empty-title">Aucune cible</p><p class="empty-subtitle text-secondary"><a href="{{ url_for('targets.create') }}">Créer la première cible</a></p></div></div>
+  {% endif %}
+</div>
+{% endblock %}

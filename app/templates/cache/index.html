@@ -1,0 +1,669 @@
+{% extends "base.html" %}
+{% block title %}Synchronisation — {{ APP_NAME }}{% endblock %}
+{% block breadcrumb_content %}Synchronisation{% endblock %}
+
+{% macro age_badge(stats) %}
+{% if stats.age_minutes is not none and stats.age_minutes >= 0 %}
+  {% if stats.age_minutes < stats.threshold_ok|default(60) %}
+    <span class="badge bg-green-lt"><i class="ti ti-circle-check me-1"></i>À jour</span>
+  {% elif stats.age_minutes < stats.threshold_warn|default(1440) %}
+    <span class="badge bg-yellow-lt"><i class="ti ti-clock me-1"></i>{{ stats.age_minutes // 60 }}h</span>
+  {% else %}
+    <span class="badge bg-red-lt"><i class="ti ti-alert-triangle me-1"></i>{{ stats.age_minutes // 1440 }}j</span>
+  {% endif %}
+{% elif not stats.exists|default(false) %}
+  <span class="badge bg-secondary-lt"><i class="ti ti-file-off me-1"></i>Absent</span>
+{% endif %}
+{% endmacro %}
+
+{% block page_actions %}{% endblock %}
+
+{% block content %}
+<div class="toast-container" id="toast-container"></div>
+
+{# ── CVE EUVD ─────────────────────────────────────────────────────────── #}
+<div class="row mb-4">
+  <div class="col-12 col-lg-6">
+    <div class="card border-cyan h-100" id="cve-card" data-task="cve">
+      <div class="card-header">
+        <h3 class="card-title"><i class="ti ti-shield-check me-2 text-cyan"></i>Cache CVE (EUVD)</h3>
+        <div class="card-actions">
+          <span data-field="cve-missing">{% if cve_stats.missing > 0 %}<span class="badge bg-yellow-lt me-2">{{ cve_stats.missing }} CVE manquantes</span>{% endif %}</span>
+          <span class="cache-badge">{{ age_badge(cve_stats) }}</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="row g-3" id="cve-stats">
+          <div class="col-sm-6 col-lg-6">
+            <div class="datagrid-item">
+              <div class="datagrid-title">CVE en cache</div>
+              <div class="datagrid-content">
+                <strong class="text-cyan" data-field="cve-count">{{ cve_stats.count }}</strong>
+                {% if cve_stats.in_vulns > 0 %}
+                <span class="text-secondary">/ <span data-field="cve-in-vulns">{{ cve_stats.in_vulns }}</span> référencées</span>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+          <div class="col-sm-6 col-lg-6">
+            <div class="datagrid-item">
+              <div class="datagrid-title">Manquantes</div>
+              <div class="datagrid-content" data-field="cve-missing-count">{{ cve_stats.missing }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="cve-status" class="task-status alert alert-info d-none mt-3 mb-0">
+          <div class="d-flex align-items-center">
+            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+            <div class="flex-fill">
+              <span class="task-message">Mise à jour en cours...</span>
+              <span class="task-progress ms-2 text-secondary"></span>
+            </div>
+          </div>
+        </div>
+
+        <div id="cve-buttons" class="mt-3 d-flex gap-2 flex-wrap">
+          <form method="POST" action="{{ url_for('cache.refresh_cve') }}" class="d-inline async-form" data-task="cve" data-card="cve-card">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <button type="submit" class="btn btn-cyan btn-sm">
+              <i class="ti ti-download me-1"></i>Télécharger nouvelles CVE
+            </button>
+          </form>
+          {% if cve_stats.count > 0 %}
+          <form method="POST" action="{{ url_for('cache.update_cve') }}" class="d-inline async-form" data-task="cve" data-card="cve-card">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <button type="submit" class="btn btn-ghost-cyan btn-sm">
+              <i class="ti ti-refresh me-1"></i>Mettre à jour existantes
+            </button>
+          </form>
+          {% endif %}
+        </div>
+
+        <div class="mt-2 text-secondary small">
+          <i class="ti ti-info-circle me-1"></i>
+          CVE depuis l'<a href="https://euvd.enisa.europa.eu/" target="_blank" rel="noopener">EUVD (ENISA)</a>.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── KEV ──────────────────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-6">
+    <div class="card border-red h-100" id="kev-card" data-task="kev">
+      <div class="card-header">
+        <h3 class="card-title"><i class="ti ti-alert-triangle me-2 text-red"></i>Cache KEV (Exploitations connues)</h3>
+        <div class="card-actions"><span class="cache-badge">{{ age_badge(kev_stats) }}</span></div>
+      </div>
+      <div class="card-body">
+        <div class="row g-3" id="kev-stats">
+          <div class="col-sm-6">
+            <div class="datagrid-item">
+              <div class="datagrid-title">Vulnérabilités exploitées</div>
+              <div class="datagrid-content">
+                {% if kev_stats.exists %}
+                <strong class="text-red">{{ kev_stats.count }}</strong>
+                {% else %}<span class="text-secondary">—</span>{% endif %}
+              </div>
+            </div>
+          </div>
+          <div class="col-sm-6">
+            <div class="datagrid-item">
+              <div class="datagrid-title">Dernière MAJ</div>
+              <div class="datagrid-content">
+                {% if kev_stats.exists %}{{ kev_stats.date }}{% else %}—{% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="kev-status" class="task-status alert alert-info d-none mt-3 mb-0">
+          <div class="d-flex align-items-center">
+            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+            <div class="flex-fill">
+              <span class="task-message">Mise à jour en cours...</span>
+              <span class="task-progress ms-2 text-secondary"></span>
+            </div>
+          </div>
+        </div>
+
+        <div id="kev-buttons" class="mt-3">
+          <form method="POST" action="{{ url_for('cache.refresh_kev') }}" class="d-inline async-form" data-task="kev" data-card="kev-card">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <button type="submit" class="btn btn-red btn-sm">
+              <i class="ti ti-download me-1"></i>{% if kev_stats.exists %}Mettre à jour{% else %}Télécharger{% endif %} KEV
+            </button>
+          </form>
+        </div>
+
+        <div class="mt-2 text-secondary small">
+          <i class="ti ti-info-circle me-1"></i>
+          Vulnérabilités activement exploitées depuis l'EUVD.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── ANSSI ──────────────────────────────────────────────────────────────── #}
+<div class="row mb-4">
+  <div class="col-12">
+    <div class="card border-orange" id="anssi-card" data-task="anssi">
+      <div class="card-header">
+        <h3 class="card-title"><i class="ti ti-building-fortress me-2 text-orange"></i>Cache ANSSI (CERT-FR)</h3>
+        <div class="card-actions"><span class="cache-badge">{{ age_badge(anssi_stats) }}</span></div>
+      </div>
+      <div class="card-body">
+        <div class="row g-3" id="anssi-stats">
+          <div class="col-sm-6 col-lg-3">
+            <div class="datagrid-item">
+              <div class="datagrid-title">CVE indexées</div>
+              <div class="datagrid-content">
+                {% if anssi_stats.exists %}
+                <strong class="text-orange">{{ anssi_stats.count }}</strong>
+                {% else %}<span class="text-secondary">—</span>{% endif %}
+              </div>
+            </div>
+          </div>
+          <div class="col-sm-6 col-lg-3">
+            <div class="datagrid-item">
+              <div class="datagrid-title">Alertes CERT-FR</div>
+              <div class="datagrid-content">
+                {% if anssi_stats.exists %}
+                <strong class="text-red">{{ anssi_stats.alertes }}</strong> CVE
+                {% else %}—{% endif %}
+              </div>
+            </div>
+          </div>
+          <div class="col-sm-6 col-lg-3">
+            <div class="datagrid-item">
+              <div class="datagrid-title">Avis CERT-FR</div>
+              <div class="datagrid-content">
+                {% if anssi_stats.exists %}
+                <strong class="text-yellow">{{ anssi_stats.avis }}</strong> CVE
+                {% else %}—{% endif %}
+              </div>
+            </div>
+          </div>
+          <div class="col-sm-6 col-lg-3">
+            <div class="datagrid-item">
+              <div class="datagrid-title">Dernière MAJ</div>
+              <div class="datagrid-content">
+                {% if anssi_stats.exists %}{{ anssi_stats.date }}{% else %}—{% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="anssi-status" class="task-status alert alert-info d-none mt-3 mb-0">
+          <div class="d-flex align-items-center">
+            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+            <div class="flex-fill">
+              <span class="task-message">Mise à jour en cours...</span>
+              <span class="task-progress ms-2 text-secondary"></span>
+            </div>
+          </div>
+        </div>
+
+        <div id="anssi-buttons" class="mt-3 d-flex gap-2 flex-wrap">
+          <form method="POST" action="{{ url_for('cache.refresh_anssi') }}" class="d-inline async-form" data-task="anssi" data-card="anssi-card">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <input type="hidden" name="full" value="0"/>
+            <button type="submit" class="btn btn-orange btn-sm">
+              <i class="ti ti-refresh me-1"></i>Mettre à jour
+            </button>
+          </form>
+          <form method="POST" action="{{ url_for('cache.refresh_anssi') }}" class="d-inline async-form" data-task="anssi" data-card="anssi-card">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <input type="hidden" name="full" value="1"/>
+            <button type="submit" class="btn btn-ghost-orange btn-sm">
+              <i class="ti ti-download me-1"></i>Recharger tout
+            </button>
+          </form>
+        </div>
+
+        <div class="mt-2 text-secondary small">
+          <i class="ti ti-info-circle me-1"></i>
+          Alertes et avis du <a href="https://www.cert.ssi.gouv.fr/" target="_blank" rel="noopener">CERT-FR (ANSSI)</a>.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Dictionnaire CPE ───────────────────────────────────────────────────── #}
+<div class="row mb-4">
+  <div class="col-12">
+    <div class="card border-azure" id="cpe_dict-card" data-task="cpe_dict">
+      <div class="card-header">
+        <h3 class="card-title"><i class="ti ti-database me-2 text-azure"></i>Dictionnaire CPE (NVD)</h3>
+        <div class="card-actions"><span class="cache-badge">{{ age_badge(cpe_dict_stats) }}</span></div>
+      </div>
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-sm-6 col-lg-3">
+            <div class="datagrid-item">
+              <div class="datagrid-title">Entrées CPE</div>
+              <div class="datagrid-content">
+                {% if cpe_dict_stats.exists %}
+                <strong class="text-azure">{{ cpe_dict_stats.count }}</strong>
+                {% else %}<span class="text-secondary">—</span>{% endif %}
+              </div>
+            </div>
+          </div>
+          <div class="col-sm-6 col-lg-3">
+            <div class="datagrid-item">
+              <div class="datagrid-title">Vendors</div>
+              <div class="datagrid-content">{{ cpe_dict_stats.vendors if cpe_dict_stats.exists else '—' }}</div>
+            </div>
+          </div>
+          <div class="col-sm-6 col-lg-3">
+            <div class="datagrid-item">
+              <div class="datagrid-title">Produits</div>
+              <div class="datagrid-content">{{ cpe_dict_stats.products if cpe_dict_stats.exists else '—' }}</div>
+            </div>
+          </div>
+          <div class="col-sm-6 col-lg-3">
+            <div class="datagrid-item">
+              <div class="datagrid-title">Dernière MAJ</div>
+              <div class="datagrid-content">
+                {% if cpe_dict_stats.exists %}{{ cpe_dict_stats.date[:19] }}{% else %}—{% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="cpe_dict-status" class="task-status alert alert-info d-none mt-3 mb-0">
+          <div class="d-flex align-items-center">
+            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+            <div class="flex-fill">
+              <span class="task-message">Synchronisation en cours...</span>
+              <span class="task-progress ms-2 text-secondary"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-3">
+          <form method="POST" action="{{ url_for('cache.refresh_cpe') }}" class="d-inline async-form" data-task="cpe_dict" data-card="cpe_dict-card">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <button type="submit" class="btn btn-azure btn-sm">
+              <i class="ti ti-refresh me-1"></i>{% if cpe_dict_stats.exists %}Mettre à jour{% else %}Synchroniser{% endif %}
+            </button>
+          </form>
+        </div>
+
+        <div class="mt-2 text-secondary small">
+          <i class="ti ti-info-circle me-1"></i>
+          Référentiel CPE depuis le <a href="https://nvd.nist.gov/products/cpe" target="_blank" rel="noopener">NVD (NIST)</a>. Utilisé pour la surveillance logicielle.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Référentiel IANA port→service ──────────────────────────────────────── #}
+<div class="row mb-4">
+  <div class="col-12">
+    <div class="card border-purple" id="iana-card" data-task="iana">
+      <div class="card-header">
+        <h3 class="card-title"><i class="ti ti-plug-connected me-2 text-purple"></i>Référentiel des ports (IANA)</h3>
+        <div class="card-actions"><span class="cache-badge">{{ age_badge(iana_stats) }}</span></div>
+      </div>
+      <div class="card-body">
+        <div class="row g-3" id="iana-stats">
+          <div class="col-sm-6">
+            <div class="datagrid-item">
+              <div class="datagrid-title">Correspondances port→service</div>
+              <div class="datagrid-content">
+                {% if iana_stats.exists %}
+                <strong class="text-purple">{{ iana_stats.count }}</strong>
+                {% else %}<span class="text-secondary">—</span>{% endif %}
+              </div>
+            </div>
+          </div>
+          <div class="col-sm-6">
+            <div class="datagrid-item">
+              <div class="datagrid-title">Dernière MAJ</div>
+              <div class="datagrid-content">
+                {% if iana_stats.exists %}{{ iana_stats.date[:19] }}{% else %}—{% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="iana-status" class="task-status alert alert-info d-none mt-3 mb-0">
+          <div class="d-flex align-items-center">
+            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+            <div class="flex-fill">
+              <span class="task-message">Mise à jour en cours...</span>
+              <span class="task-progress ms-2 text-secondary"></span>
+            </div>
+          </div>
+        </div>
+
+        <div id="iana-buttons" class="mt-3">
+          <form method="POST" action="{{ url_for('cache.refresh_iana') }}" class="d-inline async-form" data-task="iana" data-card="iana-card">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <button type="submit" class="btn btn-purple btn-sm">
+              <i class="ti ti-download me-1"></i>{% if iana_stats.exists %}Mettre à jour{% else %}Télécharger{% endif %} IANA
+            </button>
+          </form>
+        </div>
+
+        <div class="mt-2 text-secondary small">
+          <i class="ti ti-info-circle me-1"></i>
+          Noms de services associés aux numéros de port depuis l'<a href="https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml" target="_blank" rel="noopener">IANA</a>. Affichés à côté des ports des vulnérabilités.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Résolution DNS inverse ──────────────────────────────────────────────── #}
+<div class="row mb-4">
+  <div class="col-12">
+    <div class="card border-teal" id="dns-card" data-task="dns">
+      <div class="card-header">
+        <h3 class="card-title"><i class="ti ti-world me-2 text-teal"></i>Résolution DNS inverse</h3>
+        <div class="card-actions"><span class="cache-badge">{{ age_badge(dns_stats) }}</span></div>
+      </div>
+      <div class="card-body">
+        <div class="row g-3" id="dns-stats">
+          <div class="col-sm-4">
+            <div class="datagrid-item">
+              <div class="datagrid-title">Hostnames résolus</div>
+              <div class="datagrid-content">
+                {% if dns_stats.exists %}
+                <strong class="text-teal">{{ dns_stats.resolved }}</strong>
+                {% else %}<span class="text-secondary">—</span>{% endif %}
+              </div>
+            </div>
+          </div>
+          <div class="col-sm-4">
+            <div class="datagrid-item">
+              <div class="datagrid-title">IP tentées</div>
+              <div class="datagrid-content">{{ dns_stats.count if dns_stats.exists else '—' }}</div>
+            </div>
+          </div>
+          <div class="col-sm-4">
+            <div class="datagrid-item">
+              <div class="datagrid-title">Dernière MAJ</div>
+              <div class="datagrid-content">
+                {% if dns_stats.exists %}{{ dns_stats.date[:19] }}{% else %}—{% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="dns-status" class="task-status alert alert-info d-none mt-3 mb-0">
+          <div class="d-flex align-items-center">
+            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+            <div class="flex-fill">
+              <span class="task-message">Résolution en cours...</span>
+              <span class="task-progress ms-2 text-secondary"></span>
+            </div>
+          </div>
+        </div>
+
+        <div id="dns-buttons" class="mt-3 d-flex gap-2 flex-wrap">
+          <form method="POST" action="{{ url_for('cache.refresh_dns') }}" class="d-inline async-form" data-task="dns" data-card="dns-card">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <button type="submit" class="btn btn-teal btn-sm">
+              <i class="ti ti-refresh me-1"></i>Résoudre les nouvelles IP
+            </button>
+          </form>
+          <form method="POST" action="{{ url_for('cache.refresh_dns') }}" class="d-inline async-form" data-task="dns" data-card="dns-card">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <input type="hidden" name="full" value="1"/>
+            <button type="submit" class="btn btn-outline-teal btn-sm"
+                    title="Ré-résout TOUTES les IP en base (renommages, PTR ajoutés, retente les vides)">
+              <i class="ti ti-reload me-1"></i>Rescan complet (forcé)
+            </button>
+          </form>
+        </div>
+
+        <div class="mt-2 text-secondary small">
+          <i class="ti ti-info-circle me-1"></i>
+          Remplace les IP par leur nom d'hôte (PTR) quand il existe. Le passage périodique ne traite que les IP jamais tentées ; une IP sans PTR est mémorisée pour ne pas être re-scannée.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Surveillance logicielle ─────────────────────────────────────────────── #}
+<div class="row mb-4">
+  <div class="col-12">
+    <div class="card border-green" id="cpe_watch-card" data-task="cpe_watch">
+      <div class="card-header">
+        <h3 class="card-title"><i class="ti ti-eye me-2 text-green"></i>Surveillance logicielle</h3>
+        <div class="card-actions">
+          <span class="cache-badge">{{ age_badge(cpe_watch_stats) }}</span>
+          <a href="{{ url_for('settings.software') }}" class="btn btn-ghost-secondary btn-sm">
+            <i class="ti ti-settings me-1"></i>Gérer
+          </a>
+        </div>
+      </div>
+      <div class="card-body">
+        <div id="cpe_watch-status" class="task-status alert alert-info d-none mb-3">
+          <div class="d-flex align-items-center">
+            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+            <div class="flex-fill">
+              <span class="task-message">Vérification en cours...</span>
+              <span class="task-progress ms-2 text-secondary"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-0 d-flex align-items-center flex-wrap gap-2">
+          <form method="POST" action="{{ url_for('cache.refresh_cpe_watch') }}" class="d-inline async-form" data-task="cpe_watch" data-card="cpe_watch-card">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <button type="submit" class="btn btn-green btn-sm"
+                    title="Incrémental : saute les logiciels à jour et à version inchangée, réévalue localement ceux dont la version a changé, ne télécharge EUVD que pour les périmés/nouveaux (récupère les nouvelles CVE).">
+              <i class="ti ti-refresh me-1"></i>Lancer la vérification
+            </button>
+          </form>
+          <form method="POST" action="{{ url_for('cache.refresh_cpe_watch_local') }}" class="d-inline async-form" data-task="cpe_watch" data-card="cpe_watch-card">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <button type="submit" class="btn btn-outline-green btn-sm"
+                    title="Force la réévaluation de TOUS les logiciels en cache (même version inchangée), sans appel réseau. Utile après un correctif du moteur de matching.">
+              <i class="ti ti-reload me-1"></i>Réévaluation locale (forcée)
+            </button>
+          </form>
+        </div>
+        <small class="text-secondary d-block mt-2"><strong>Lancer la vérification</strong> : incrémentale — ne retélécharge EUVD que pour les logiciels périmés ou nouveaux (récupère les nouvelles CVE), réévalue localement ceux dont tu as changé la version, saute le reste. <strong>Réévaluation locale (forcée)</strong> : rejoue le matching sur tout le cache (sans réseau), pour réappliquer un correctif de matching aux anciens findings.</small>
+
+        {% if cpe_watch_items %}
+        <div class="table-responsive mt-3">
+          <table class="table table-vcenter table-sm card-table">
+            <thead>
+              <tr>
+                <th>Vendor</th>
+                <th>Produit</th>
+                <th>Version</th>
+                <th>Dernière vérification</th>
+                <th class="text-center">Statut</th>
+                <th class="text-end"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for it in cpe_watch_items %}
+              <tr data-sw-id="{{ it.id }}">
+                <td class="fw-medium">{{ it.vendor }}</td>
+                <td>{{ it.product }}</td>
+                <td class="text-secondary small">{{ it.version or '—' }}</td>
+                <td class="text-secondary small text-nowrap cpe-last-checked">
+                  {{ (it.last_checked[:16] | replace('T', ' ')) if it.last_checked else '—' }}
+                </td>
+                <td class="text-center cpe-status">
+                  {% if not it.last_checked %}
+                    <span class="badge bg-secondary-lt">jamais</span>
+                  {% elif it.last_complete %}
+                    <span class="badge bg-green-lt">complet</span>
+                  {% else %}
+                    <span class="badge bg-orange-lt">partiel</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <form method="POST" action="{{ url_for('settings.software_check', item_id=it.id) }}"
+                        class="d-inline async-form" data-task="cpe_watch" data-card="cpe_watch-card">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                    <button type="submit" class="btn btn-ghost-green btn-sm btn-icon" title="Relancer la surveillance de ce logiciel">
+                      <i class="ti ti-refresh"></i>
+                    </button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ══ Section GVM ════════════════════════════════════════════════════════════ #}
+<div class="card border-cyan mb-4">
+  <div class="card-header">
+    <h3 class="card-title"><i class="ti ti-radar-2 me-2 text-cyan"></i>GVM (OpenVAS)</h3>
+    <div class="card-actions">
+      <button type="button" class="btn btn-primary btn-sm" id="btn-refresh-all-gmp">
+        <i class="ti ti-refresh me-1"></i>Tout rafraîchir
+      </button>
+    </div>
+  </div>
+  <div class="card-body">
+
+{# ── Vulnérabilités (findings) ──────────────────────────────────────────── #}
+<div class="row row-cards mb-4">
+  <div class="col-12">
+    <div class="card" id="gmp_vulns-card" data-task="gmp_vulns">
+      <div class="card-header">
+        <div class="d-flex align-items-center w-100 gap-2">
+          <i class="ti ti-bug text-cyan"></i>
+          <h3 class="card-title mb-0">Vulnérabilités</h3>
+          <div class="ms-auto d-flex align-items-center gap-2">
+            {% if vulns_meta.exists %}
+            <span class="badge bg-cyan-lt">{{ vulns_meta.findings }} findings actifs</span>
+            {% endif %}
+            <span class="badge bg-secondary-lt">{{ vulns_meta.tasks }} tâche(s) importée(s)</span>
+            <span class="cache-badge">{{ age_badge(vulns_meta) }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-body">
+        <div id="gmp_vulns-status" class="task-status alert alert-info d-none mb-3">
+          <div class="d-flex align-items-center">
+            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+            <div class="flex-fill">
+              <span class="task-message">Mise à jour...</span>
+              <span class="task-progress ms-2 text-secondary"></span>
+            </div>
+          </div>
+        </div>
+
+        {% if vulns_meta.detail %}
+        <div class="table-responsive mb-3">
+          <table class="table table-vcenter table-sm" style="font-size:0.8rem">
+            <thead>
+              <tr>
+                <th>Tâche de scan</th>
+                <th>Dernier rapport</th>
+                <th>Date scan</th>
+                <th>Importé le</th>
+                <th>Résultats</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for task_id, info in vulns_meta.detail.items() %}
+              <tr>
+                <td class="fw-medium">{{ info.task_name }}</td>
+                <td><code class="small text-secondary">{{ info.report_id[:8] }}…</code></td>
+                <td class="text-secondary small">{{ info.scan_date[:10] if info.scan_date else '—' }}</td>
+                <td class="text-secondary small">{{ info.date }}</td>
+                <td class="text-secondary small">{{ info.results_count }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="text-secondary small mb-3">Aucune donnée. Lancez un rafraîchissement.</p>
+        {% endif %}
+
+        <div id="gmp_vulns-buttons">
+          <form id="form-refresh-vulns" method="POST" action="{{ url_for('cache.refresh_vulns') }}" class="d-none" data-task="gmp_vulns">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+          </form>
+          <button type="button" id="btn-refresh-vulns" class="btn btn-ghost-cyan btn-sm">
+            <i class="ti ti-refresh me-1"></i>Rafraîchir les vulnérabilités
+          </button>
+          <small class="text-secondary ms-2">Télécharge le dernier rapport de chaque scan et importe les résultats</small>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Caches GMP ─────────────────────────────────────────────────────────── #}
+<div class="row row-cards" id="gmp-all-card">
+  {% for c in caches %}
+  <div class="col-md-6 col-lg-4">
+    <div class="card" id="gmp_{{ c.name }}-card" data-task="gmp_{{ c.name }}">
+      <div class="card-body">
+        <div class="d-flex align-items-center mb-3">
+          <div class="flex-fill">
+            <h3 class="card-title mb-0">{{ c.label }}</h3>
+          </div>
+          <span class="cache-badge">{{ age_badge(c) }}</span>
+        </div>
+
+        <div id="gmp_{{ c.name }}-status" class="task-status alert alert-info d-none mb-3">
+          <div class="d-flex align-items-center">
+            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+            <div class="flex-fill">
+              <span class="task-message">Mise à jour...</span>
+              <span class="task-progress ms-2 text-secondary"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="datagrid mb-3">
+          <div class="datagrid-item">
+            <div class="datagrid-title">Dernière mise à jour</div>
+            <div class="datagrid-content" data-field="date">{{ c.date }}</div>
+          </div>
+          <div class="datagrid-item">
+            <div class="datagrid-title">Éléments</div>
+            <div class="datagrid-content" data-field="count">{% if c.exists %}{{ c.count }}{% else %}—{% endif %}</div>
+          </div>
+        </div>
+
+        <div id="gmp_{{ c.name }}-buttons">
+          <form method="POST" action="{{ url_for('cache.refresh_one', cache_name=c.name) }}" class="async-form" data-task="gmp_{{ c.name }}" data-card="gmp_{{ c.name }}-card">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <button type="submit" class="btn btn-ghost-cyan btn-sm w-100">
+              <i class="ti ti-refresh me-1"></i>Rafraîchir
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+  </div>{# /card-body #}
+</div>{# /card GVM #}
+{% endblock %}
+
+{% block extra_scripts %}
+<div id="gmpilot-cache-config"
+     data-status-url="{{ url_for('cache.task_status', task_type='__TYPE__') }}"
+     data-meta-url="{{ url_for('cache.cache_meta_json') }}"
+     data-cpe-table-url="{{ url_for('cache.cpe_watch_table') }}"></div>
+<script src="{{ url_for('static', filename='js/cache.js') }}"></script>
+{% endblock extra_scripts %}

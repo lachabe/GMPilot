@@ -1,0 +1,19 @@
+{# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+{% block title %}Nouveau tag{% endblock %}
+{% block breadcrumb_content %}Nouveau tag{% endblock %}
+{% block page_actions %}<a href="{{ url_for('tags.index') }}" class="btn btn-ghost-secondary btn-sm"><i class="ti ti-arrow-left me-1"></i>Retour</a>{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-lg-6">
+  <div class="card"><div class="card-header"><h3 class="card-title"><i class="ti ti-tag me-2"></i>Définition du tag</h3></div>
+    <div class="card-body">
+      <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+        <div class="mb-3"><label class="form-label required">Nom</label><input type="text" name="name" class="form-control" required autofocus/></div>
+        <div class="mb-3"><label class="form-label">Valeur</label><input type="text" name="value" class="form-control"/></div>
+        <div class="mb-3"><label class="form-label">Commentaire</label><textarea name="comment" class="form-control" rows="2"></textarea></div>
+        <div class="d-flex gap-2"><button type="submit" class="btn btn-primary"><i class="ti ti-plus me-1"></i>Créer</button><a href="{{ url_for('tags.index') }}" class="btn btn-ghost-secondary">Annuler</a></div>
+      </form>
+    </div>
+  </div>
+</div></div>
+{% endblock %}

@@ -1,0 +1,143 @@
+{# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+{% extends "base.html" %}
+{% from "macros/cache.html" import cache_banner %}
+{% from "macros/pagination.html" import paginate %}
+{% block title %}Tâches de scan{% endblock %}
+{% block breadcrumb_content %}Tâches de scan{% endblock %}
+
+{% block page_actions %}
+<div class="d-flex align-items-center gap-2">
+  <label class="form-label small mb-0 text-secondary">Auto-refresh</label>
+  <select id="scans-autorefresh" class="form-select form-select-sm" style="width:auto">
+    <option value="0">Désactivé</option>
+    <option value="15">15s</option>
+    <option value="30">30s</option>
+    <option value="60">1 min</option>
+    <option value="300">5 min</option>
+  </select>
+  <span id="scans-refresh-indicator" class="text-secondary small d-none">
+    <div class="spinner-border spinner-border-sm text-cyan" style="width:.7rem;height:.7rem"></div>
+  </span>
+  <a href="{{ url_for('scans.create') }}" class="btn btn-primary btn-sm ms-2">
+    <i class="ti ti-plus me-1"></i>Nouvelle tâche
+  </a>
+</div>
+{% endblock %}
+
+{% block content %}
+{{ cache_banner(cache_meta("tasks")) }}
+<div class="card">
+  {% if tasks %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead>
+        <tr>
+          <th>Nom</th><th>Cible</th><th>Configuration</th><th>État</th>
+          <th>Progression</th><th>Sévérité</th><th>Dernier rapport</th><th class="w-1"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in tasks %}
+        <tr id="row-{{ t.id }}" data-task-id="{{ t.id }}" data-task-status="{{ t.status }}">
+          <td class="fw-medium">{{ t.name }}</td>
+          <td class="text-secondary">{{ t.target_name }}</td>
+          <td class="text-secondary small">{{ t.config_name }}</td>
+          <td>
+            {% if t.status in ('Running','Requested') %}
+              <span class="status status-green"><span class="status-dot status-dot-animated"></span><span id="status-{{ t.id }}">En cours</span></span>
+            {% elif t.status == 'Done' %}
+              <span class="status status-cyan">Terminé</span>
+            {% elif t.status == 'Stopped' %}
+              <span class="status text-secondary">Arrêté</span>
+            {% elif t.status == 'New' %}
+              <span class="status text-secondary">Nouveau</span>
+            {% else %}
+              <span class="status status-red">{{ t.status }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if t.status in ('Running','Requested') %}
+            <div class="d-flex align-items-center gap-2" style="min-width:90px">
+              <div class="progress progress-sm flex-fill" style="width:65px">
+                <div class="progress-bar bg-cyan" id="prog-{{ t.id }}" style="width:{{ t.progress }}%"></div>
+              </div>
+              <span class="small text-secondary" id="progtext-{{ t.id }}">{{ t.progress }}%</span>
+            </div>
+            {% else %}<span class="text-secondary">—</span>{% endif %}
+          </td>
+          <td>
+            {% set sev = t.severity|float %}
+            {% if sev >= 9.0 %}<span class="badge badge-critical"><i class="ti ti-radiation me-1"></i>{{ "%.1f"|format(sev) }}</span>
+            {% elif sev >= 7.0 %}<span class="badge badge-high"><i class="ti ti-alert-octagon me-1"></i>{{ "%.1f"|format(sev) }}</span>
+            {% elif sev >= 4.0 %}<span class="badge badge-medium"><i class="ti ti-alert-triangle me-1"></i>{{ "%.1f"|format(sev) }}</span>
+            {% elif sev > 0 %}<span class="badge badge-low"><i class="ti ti-info-circle me-1"></i>{{ "%.1f"|format(sev) }}</span>
+            {% else %}<span class="text-secondary">—</span>{% endif %}
+          </td>
+          <td>
+            {% if t.last_report_id %}
+            <a id="vuln-link-{{ t.id }}" href="{{ url_for('vulns.index', task_ids=t.id) }}" class="btn btn-ghost-secondary btn-sm">
+              <i class="ti ti-bug me-1"></i>Vulnérabilités
+            </a>
+            {% else %}<span class="text-secondary small">Aucun</span>{% endif %}
+          </td>
+          <td>
+            <div class="d-flex gap-1" id="actions-{{ t.id }}">
+              {% if t.status in ('New','Done','Stopped','Interrupted') %}
+              <form method="POST" action="{{ url_for('scans.start', task_id=t.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button type="submit" class="btn btn-ghost-success btn-icon btn-sm" title="Démarrer">
+                  <i class="ti ti-player-play"></i>
+                </button>
+              </form>
+              {% endif %}
+              {% if t.status == 'Running' %}
+              <form method="POST" action="{{ url_for('scans.stop', task_id=t.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button type="submit" class="btn btn-ghost-warning btn-icon btn-sm" title="Arrêter">
+                  <i class="ti ti-player-stop"></i>
+                </button>
+              </form>
+              {% endif %}
+              {% if t.status == 'Stopped' %}
+              <form method="POST" action="{{ url_for('scans.resume', task_id=t.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button type="submit" class="btn btn-ghost-secondary btn-icon btn-sm" title="Reprendre">
+                  <i class="ti ti-rotate-clockwise"></i>
+                </button>
+              </form>
+              {% endif %}
+              <form method="POST" action="{{ url_for('scans.delete', task_id=t.id) }}" class="d-inline"
+                    onsubmit="return confirm('Supprimer la tâche « {{ t.name }} » ?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button type="submit" class="btn btn-ghost-danger btn-icon btn-sm" title="Supprimer">
+                  <i class="ti ti-trash"></i>
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ paginate(tasks, page, per_page, total, 'scans.index') }}
+  {% else %}
+  <div class="card-body">
+    <div class="empty">
+      <div class="empty-icon"><i class="ti ti-radar-2"></i></div>
+      <p class="empty-title">Aucune tâche configurée</p>
+      <p class="empty-subtitle text-secondary">
+        <a href="{{ url_for('scans.create') }}">Créer la première tâche</a>
+      </p>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<div id="gmpilot-scans-config"
+     data-running-tasks="{{ tasks|selectattr('status','in',['Running','Requested'])|map(attribute='id')|list|tojson|e }}"
+     data-status-all-url="{{ url_for('scans.status_all') }}"></div>
+<script src="{{ url_for('static', filename='js/scans.js') }}"></script>
+{% endblock %}

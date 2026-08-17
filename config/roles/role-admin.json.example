@@ -1,0 +1,65 @@
+{
+  "id": "admin",
+  "name": "Administrateur",
+  "description": "Accès complet à toutes les fonctionnalités",
+  "matching": {
+    "ldap": {
+      "enabled": false,
+      "groups": [
+        "CN=Admins,OU=Groups,DC=example,DC=com"
+      ]
+    },
+    "oidc": {
+      "enabled": false,
+      "groups": []
+    }
+  },
+  "permissions": {
+    "cache.read": true,
+    "cache.refresh_gmp": true,
+    "cache.refresh_vulns": true,
+    "cache.refresh_cve": true,
+    "cache.refresh_kev": true,
+    "cache.refresh_anssi": true,
+    "vulns.read": true,
+    "vulns.detail": true,
+    "vulns.mark_fp": true,
+    "vulns.debug": true,
+    "scans.read": true,
+    "scans.create": true,
+    "scans.start": true,
+    "scans.stop": true,
+    "scans.resume": true,
+    "scans.delete": true,
+    "targets.read": true,
+    "targets.create": true,
+    "targets.delete": true,
+    "schedules.read": true,
+    "schedules.create": true,
+    "schedules.edit": true,
+    "schedules.delete": true,
+    "assets.read": true,
+    "assets.detail": true,
+    "assets.delete": true,
+    "tags.read": true,
+    "tags.create": true,
+    "tags.edit": true,
+    "tags.assign": true,
+    "tags.delete": true,
+    "port_lists.read": true,
+    "port_lists.delete": true,
+    "scanners.read": true,
+    "scanners.edit": true,
+    "scanners.verify": true,
+    "feeds.read": true,
+    "roles.read": true,
+    "roles.create": true,
+    "roles.edit": true,
+    "roles.delete": true,
+    "settings.scoring_read": true,
+    "settings.scoring_edit": true,
+    "settings.general_read": true,
+    "settings.general_edit": true,
+    "dns.manage": true
+  }
+}

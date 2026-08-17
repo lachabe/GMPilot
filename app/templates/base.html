@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="fr" data-bs-theme="dark">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="csrf-token" content="{{ csrf_token() }}"/>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/logo.svg') }}"/>
+  <title>{% block title %}{{ APP_NAME }}{% endblock %}</title>
+  <link rel="preload" href="/static/vendor/fonts/tabler-icons.woff2" as="font" type="font/woff2" crossorigin="anonymous"/>
+
+  <link rel="stylesheet" href="/static/vendor/tabler-icons-3.26.0.min.css"/>
+  <link rel="stylesheet" href="/static/vendor/tabler-1.4.0.min.css"/>
+  {% block extra_head %}{% endblock %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/gmpilot.css') }}">
+</head>
+<body class="d-flex flex-column" data-csrf-token="{{ csrf_token() }}">
+<div class="toast-container position-fixed top-0 end-0 p-3" style="z-index:1090" id="toast-container"></div>
+<div class="page">
+
+  <!-- ── Sidebar ── -->
+  <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
+    <div class="container-fluid">
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
+              data-bs-target="#sidebar-menu" aria-controls="sidebar-menu" aria-expanded="false">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <h1 class="navbar-brand navbar-brand-autodark">
+        <a href="{{ url_for('dashboard.index') }}" class="d-flex align-items-center gap-2 text-decoration-none">
+          <img src="{{ url_for('static', filename='img/logo.svg') }}"
+               alt="GMPilot" height="36" width="36"
+               style="filter:drop-shadow(0 0 2px #0ea5e933)"/>
+          <span class="d-none d-lg-inline fw-bold text-cyan" style="font-size:1.1rem;letter-spacing:-.01em">GMPilot</span>
+        </a>
+      </h1>
+
+      <div class="collapse navbar-collapse" id="sidebar-menu">
+        {% set _gvm_blueprints = ['scans','targets','schedules','assets','tags','port_lists','scanners','feeds'] %}
+        {% set _gvm_active = request.blueprint in _gvm_blueprints %}
+        {% set _admin_blueprints = ['cache','admin'] %}
+        {% set _admin_endpoints = ['settings.scoring','settings.general','settings.software','settings.statuses_index','settings.statuses_edit','settings.statuses_create'] %}
+        {% set _admin_active = request.blueprint in _admin_blueprints or request.endpoint in _admin_endpoints %}
+
+        <ul class="navbar-nav pt-lg-3">
+
+          {# ── Dashboard ── #}
+          {% if has_perm("vulns.read") %}
+          <li class="nav-item{% if request.blueprint == 'dashboard' %} active{% endif %}">
+            <a class="nav-link" href="{{ url_for('dashboard.index') }}">
+              <span class="nav-link-icon"><i class="ti ti-dashboard"></i></span>
+              <span class="nav-link-title">Dashboard</span>
+            </a>
+          </li>
+          {% endif %}
+
+          {# ── Vulnérabilités ── #}
+          {% if has_perm("vulns.read") %}
+          <li class="nav-item{% if request.blueprint == 'vulns' %} active{% endif %}">
+            <a class="nav-link" href="{{ url_for('vulns.index') }}">
+              <span class="nav-link-icon"><i class="ti ti-bug"></i></span>
+              <span class="nav-link-title">Vulnérabilités</span>
+            </a>
+          </li>
+          {% endif %}
+
+          {# ── GVM (dépliable) ── #}
+          {% if has_perm("scans.read") or has_perm("targets.read") or has_perm("schedules.read") or has_perm("assets.read") or has_perm("tags.read") or has_perm("port_lists.read") or has_perm("scanners.read") or has_perm("feeds.read") %}
+          <li class="nav-item dropdown">
+            <a class="nav-link{% if not _gvm_active %} collapsed{% endif %}" href="#nav-gvm" data-bs-toggle="collapse" role="button"
+               aria-expanded="{{ 'true' if _gvm_active else 'false' }}">
+              <span class="nav-link-icon"><i class="ti ti-radar-2"></i></span>
+              <span class="nav-link-title">GVM</span>
+              <i class="ti ti-chevron-right nav-collapse-indicator ms-auto"></i>
+            </a>
+            <div class="collapse{% if _gvm_active %} show{% endif %}" id="nav-gvm">
+              <ul class="nav nav-sm flex-column">
+                {% if has_perm("scans.read") %}
+                <li class="nav-item{% if request.blueprint == 'scans' %} active{% endif %}">
+                  <a class="nav-link" href="{{ url_for('scans.index') }}"><i class="ti ti-radar-2 me-2"></i>Tâches de scan</a>
+                </li>
+                {% endif %}
+                {% if has_perm("targets.read") %}
+                <li class="nav-item{% if request.blueprint == 'targets' %} active{% endif %}">
+                  <a class="nav-link" href="{{ url_for('targets.index') }}"><i class="ti ti-target me-2"></i>Cibles</a>
+                </li>
+                {% endif %}
+                {% if has_perm("schedules.read") %}
+                <li class="nav-item{% if request.blueprint == 'schedules' %} active{% endif %}">
+                  <a class="nav-link" href="{{ url_for('schedules.index') }}"><i class="ti ti-calendar-clock me-2"></i>Planifications</a>
+                </li>
+                {% endif %}
+                {% if has_perm("assets.read") %}
+                <li class="nav-item{% if request.endpoint in ('assets.hosts','assets.host_detail') %} active{% endif %}">
+                  <a class="nav-link" href="{{ url_for('assets.hosts') }}"><i class="ti ti-server me-2"></i>Hôtes</a>
+                </li>
+                {% endif %}
+                {% if has_perm("tags.read") %}
+                <li class="nav-item{% if request.blueprint == 'tags' %} active{% endif %}">
+                  <a class="nav-link" href="{{ url_for('tags.index') }}"><i class="ti ti-tags me-2"></i>Tags</a>
+                </li>
+                {% endif %}
+                {% if has_perm("port_lists.read") %}
+                <li class="nav-item{% if request.blueprint == 'port_lists' %} active{% endif %}">
+                  <a class="nav-link" href="{{ url_for('port_lists.index') }}"><i class="ti ti-network me-2"></i>Listes de ports</a>
+                </li>
+                {% endif %}
+                {% if has_perm("scanners.read") %}
+                <li class="nav-item{% if request.blueprint == 'scanners' %} active{% endif %}">
+                  <a class="nav-link" href="{{ url_for('scanners.index') }}"><i class="ti ti-scan me-2"></i>Scanners</a>
+                </li>
+                {% endif %}
+                {% if has_perm("feeds.read") %}
+                <li class="nav-item{% if request.blueprint == 'feeds' %} active{% endif %}">
+                  <a class="nav-link" href="{{ url_for('feeds.index') }}"><i class="ti ti-rss me-2"></i>Flux de données</a>
+                </li>
+                {% endif %}
+              </ul>
+            </div>
+          </li>
+          {% endif %}
+
+          {# ── Administration (dépliable) ── #}
+          {% if has_perm("cache.read") or has_perm("roles.read") or has_perm("settings.scoring_read") or has_perm("settings.general_read") or has_perm("dns.manage") %}
+          <li class="nav-item dropdown">
+            <a class="nav-link{% if not _admin_active %} collapsed{% endif %}" href="#nav-admin" data-bs-toggle="collapse" role="button"
+               aria-expanded="{{ 'true' if _admin_active else 'false' }}">
+              <span class="nav-link-icon"><i class="ti ti-settings"></i></span>
+              <span class="nav-link-title">Administration</span>
+              <i class="ti ti-chevron-right nav-collapse-indicator ms-auto"></i>
+            </a>
+            <div class="collapse{% if _admin_active %} show{% endif %}" id="nav-admin">
+              <ul class="nav nav-sm flex-column">
+                {% if has_perm("cache.read") %}
+                <li class="nav-item{% if request.blueprint == 'cache' %} active{% endif %}">
+                  <a class="nav-link" href="{{ url_for('cache.index') }}"><i class="ti ti-refresh me-2"></i>Synchronisation</a>
+                </li>
+                {% endif %}
+                {% if has_perm("roles.read") %}
+                <li class="nav-item{% if request.endpoint and request.endpoint.startswith('admin.roles') %} active{% endif %}">
+                  <a class="nav-link" href="{{ url_for('admin.roles_index') }}"><i class="ti ti-shield-lock me-2"></i>Rôles</a>
+                </li>
+                {% endif %}
+                {% if has_perm("dns.manage") %}
+                <li class="nav-item{% if request.endpoint and request.endpoint.startswith('admin.dns') %} active{% endif %}">
+                  <a class="nav-link" href="{{ url_for('admin.dns_index') }}"><i class="ti ti-world me-2"></i>Résolutions DNS</a>
+                </li>
+                {% endif %}
+                {% if has_perm("settings.scoring_read") %}
+                <li class="nav-item{% if request.endpoint == 'settings.scoring' %} active{% endif %}">
+                  <a class="nav-link" href="{{ url_for('settings.scoring') }}"><i class="ti ti-chart-bar me-2"></i>Scoring</a>
+                </li>
+                {% endif %}
+                {% if has_perm("settings.general_read") %}
+                <li class="nav-item{% if request.endpoint == 'settings.software' %} active{% endif %}">
+                  <a class="nav-link" href="{{ url_for('settings.software') }}"><i class="ti ti-eye me-2"></i>Surveillance</a>
+                </li>
+                <li class="nav-item{% if request.endpoint and request.endpoint.startswith('settings.statuses') %} active{% endif %}">
+                  <a class="nav-link" href="{{ url_for('settings.statuses_index') }}"><i class="ti ti-flag me-2"></i>Statuts</a>
+                </li>
+                <li class="nav-item{% if request.endpoint == 'settings.general' %} active{% endif %}">
+                  <a class="nav-link" href="{{ url_for('settings.general') }}"><i class="ti ti-settings me-2"></i>Paramètres</a>
+                </li>
+                {% endif %}
+              </ul>
+            </div>
+          </li>
+          {% endif %}
+
+        </ul>
+
+        <!-- User footer -->
+        <div class="mt-auto border-top pt-3 pb-2 px-3">
+          {% if current_user.is_authenticated %}
+          <div class="d-flex align-items-center gap-2">
+            <span class="avatar avatar-sm bg-cyan-lt">{{ current_user.username[0]|upper }}</span>
+            <div class="flex-fill" style="min-width:0">
+              <div class="small fw-medium text-truncate">{{ current_user.username }}</div>
+            </div>
+            <a href="{{ url_for('auth.logout') }}" class="btn btn-ghost-secondary btn-icon btn-sm"
+               title="Se déconnecter">
+              <i class="ti ti-logout"></i>
+            </a>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Main ── -->
+  <div class="page-wrapper">
+    <header class="page-header d-print-none">
+      <div class="container-xl">
+        <div class="row g-2 align-items-center">
+          <div class="col">
+            <div class="page-pretitle text-secondary">{{ APP_NAME }}</div>
+            <h2 class="page-title">{% block breadcrumb_content %}{% endblock %}</h2>
+          </div>
+          <div class="col-auto">
+            {% block page_actions %}{% endblock %}
+            <button class="btn btn-ghost-secondary btn-icon" id="themeToggle"
+                    title="Basculer clair/sombre">
+              <i class="ti ti-sun" id="themeIcon"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <script type="application/json" id="base-flash-data">{{ messages | tojson }}</script>
+    {% endif %}
+    {% endwith %}
+
+    <div class="page-body">
+      <div class="container-xl">
+        {% block content %}{% endblock %}
+      </div>
+    </div>
+
+    <footer class="footer footer-transparent d-print-none">
+      <div class="container-xl">
+        <div class="text-center text-secondary small">
+          {{ APP_NAME }} v{{ APP_VERSION }}
+        </div>
+      </div>
+    </footer>
+  </div>
+</div>
+
+<script src="/static/vendor/tabler-1.4.0.min.js"></script>
+<script src="{{ url_for('static', filename='js/base.js') }}"></script>
+{% block extra_scripts %}{% endblock %}
+</body>
+</html>

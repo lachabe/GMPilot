@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% from "macros/cache.html" import cache_banner %}
+{% block title %}Flux de données{% endblock %}
+{% block breadcrumb_content %}Flux de données (Feeds){% endblock %}
+{% block content %}
+{{ cache_banner(cache_meta("feeds")) }}
+<div class="row row-cards">
+  {% for f in feeds %}
+  <div class="col-md-6 col-lg-4">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title"><i class="ti ti-rss text-cyan me-1"></i>{{ f.name }}</h3>
+        <div class="card-actions">
+          {% if f.syncing %}<span class="badge bg-yellow-lt"><i class="ti ti-refresh spin me-1"></i>Sync</span>
+          {% else %}<span class="badge bg-green-lt"><i class="ti ti-circle-check me-1"></i>À jour</span>{% endif %}
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="mb-2"><div class="text-secondary small">Type</div><div class="fw-medium">{{ f.type }}</div></div>
+        <div class="mb-2"><div class="text-secondary small">Version</div><code>{{ f.version }}</code></div>
+        <div><div class="text-secondary small">Description</div><div class="small text-secondary">{{ f.description[:120] }}{% if f.description|length > 120 %}…{% endif %}</div></div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="col-12"><div class="card"><div class="card-body"><div class="empty"><div class="empty-icon"><i class="ti ti-rss"></i></div><p class="empty-title">Aucun flux disponible</p></div></div></div></div>
+  {% endfor %}
+</div>
+{% endblock %}

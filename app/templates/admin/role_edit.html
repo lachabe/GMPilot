@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Nouveau rôle' if action == 'create' else 'Modifier ' ~ role.name }}{% endblock %}
+{% block breadcrumb_content %}
+  <a href="{{ url_for('admin.roles_index') }}">Rôles</a> —
+  {{ 'Nouveau rôle' if action == 'create' else role.name }}
+{% endblock %}
+
+{% block content %}
+<form method="POST">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+
+  <div class="row g-3">
+    <!-- Infos générales -->
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header"><h3 class="card-title mb-0">Informations générales</h3></div>
+        <div class="card-body">
+          <div class="row g-3">
+            {% if action == 'create' %}
+            <div class="col-md-3">
+              <label class="form-label required">Identifiant <small class="text-secondary">(slug, non modifiable)</small></label>
+              <input type="text" name="id" class="form-control" required pattern="[a-z0-9_\-]+"
+                     placeholder="ex: read_only" />
+            </div>
+            {% endif %}
+            <div class="col-md-4">
+              <label class="form-label required">Nom</label>
+              <input type="text" name="name" class="form-control" required
+                     value="{{ role.name if role else '' }}" placeholder="ex: Lecture seule"/>
+            </div>
+            <div class="col-md-5">
+              <label class="form-label">Description</label>
+              <input type="text" name="description" class="form-control"
+                     value="{{ role.description if role else '' }}" placeholder="Description optionnelle"/>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Matching LDAP -->
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header d-flex align-items-center gap-2">
+          <h3 class="card-title mb-0">Matching LDAP</h3>
+          <label class="form-check form-switch ms-auto mb-0">
+            <input type="checkbox" class="form-check-input" name="ldap_enabled" value="1"
+                   id="ldap-toggle"
+                   {{ 'checked' if role and role.matching.ldap.enabled else '' }}
+                   onchange="document.getElementById('ldap-groups').disabled=!this.checked"/>
+            <span class="form-check-label small">Activé</span>
+          </label>
+        </div>
+        <div class="card-body">
+          <label class="form-label">Groupes LDAP <small class="text-secondary">(un par ligne, DN complet)</small></label>
+          <textarea name="ldap_groups" id="ldap-groups" class="form-control font-monospace" rows="5"
+                    style="font-size:0.75rem"
+                    {{ 'disabled' if not (role and role.matching.ldap.enabled) else '' }}>{% if role %}{{ role.matching.ldap.groups | join('\n') }}{% endif %}</textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- Matching OIDC -->
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header d-flex align-items-center gap-2">
+          <h3 class="card-title mb-0">Matching OIDC</h3>
+          <label class="form-check form-switch ms-auto mb-0">
+            <input type="checkbox" class="form-check-input" name="oidc_enabled" value="1"
+                   id="oidc-toggle"
+                   {{ 'checked' if role and role.matching.oidc.enabled else '' }}
+                   onchange="document.getElementById('oidc-groups').disabled=!this.checked"/>
+            <span class="form-check-label small">Activé</span>
+          </label>
+        </div>
+        <div class="card-body">
+          <label class="form-label">Claims/groupes OIDC <small class="text-secondary">(un par ligne)</small></label>
+          <textarea name="oidc_groups" id="oidc-groups" class="form-control font-monospace" rows="5"
+                    style="font-size:0.75rem"
+                    {{ 'disabled' if not (role and role.matching.oidc.enabled) else '' }}>{% if role %}{{ role.matching.oidc.groups | join('\n') }}{% endif %}</textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- Permissions -->
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header d-flex align-items-center gap-2">
+          <h3 class="card-title mb-0">Permissions</h3>
+          <div class="ms-auto d-flex gap-2">
+            <button type="button" class="btn btn-ghost-secondary btn-sm" onclick="setAll(true)">Tout activer</button>
+            <button type="button" class="btn btn-ghost-danger btn-sm" onclick="setAll(false)">Tout désactiver</button>
+          </div>
+        </div>
+        <div class="card-body">
+          {% for section, perms in sections.items() %}
+          <div class="mb-4">
+            <div class="d-flex align-items-center mb-2 gap-2">
+              <h4 class="mb-0 small text-uppercase text-secondary fw-bold" style="letter-spacing:.05em">{{ section }}</h4>
+              <button type="button" class="btn btn-ghost-secondary btn-xs py-0 px-1"
+                      style="font-size:0.7rem"
+                      onclick="setSection('{{ section }}', true)">Tout</button>
+              <button type="button" class="btn btn-ghost-danger btn-xs py-0 px-1"
+                      style="font-size:0.7rem"
+                      onclick="setSection('{{ section }}', false)">Aucun</button>
+            </div>
+            <div class="row g-1">
+              {% for perm in perms %}
+              <div class="col-md-4 col-lg-3">
+                <label class="form-check perm-item" data-section="{{ section }}">
+                  <input type="checkbox" class="form-check-input perm-checkbox"
+                         name="perm_{{ perm.key }}" value="1"
+                         {{ 'checked' if role and role.permissions.get(perm.key) else '' }}/>
+                  <span class="form-check-label" style="font-size:0.8rem">
+                    <code class="small text-secondary">{{ perm.key.split('.')[1] }}</code>
+                    <span class="text-secondary"> — {{ perm.desc }}</span>
+                  </span>
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="col-12 d-flex gap-2">
+      <button type="submit" class="btn btn-primary">
+        <i class="ti ti-device-floppy me-1"></i>{{ 'Créer' if action == 'create' else 'Enregistrer' }}
+      </button>
+      <a href="{{ url_for('admin.roles_index') }}" class="btn btn-ghost-secondary">Annuler</a>
+    </div>
+  </div>
+</form>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/role_edit.js') }}"></script>
+
+{% endblock extra_scripts %}

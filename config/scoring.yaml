@@ -1,0 +1,59 @@
+# Configuration du Score Contextualisé
+# Ce fichier définit les critères et la formule de calcul du score de priorisation
+
+scoring:
+  name: "Score contextualisé"
+  description: "Score de priorisation des vulnérabilités basé sur le contexte SI"
+  
+  criteria:
+    # Exposition publique - basé sur un tag hôte "host:exposed"
+    - id: exposition
+      label: "Exposition publique"
+      description: "La vulnérabilité est-elle sur un asset exposé ?"
+      source: host_tag
+      tag_name: "host:exposed"
+      values:
+        - match: true
+          value: 1.0
+        - default: 0.3
+      weight: 3
+
+    # Mention ANSSI (alertes et avis CERT-FR)
+    - id: anssi
+      label: "Mention ANSSI"
+      description: "La CVE est-elle mentionnée dans une alerte ou un avis CERT-FR ?"
+      source: anssi
+      values:
+        - match: "alerte"
+          value: 1.0
+        - match: "avis"
+          value: 0.5
+        - default: 0.1
+      weight: 1
+
+    # Présence dans le KEV EUVD
+    - id: kev
+      label: "Présence KEV"
+      description: "La CVE est-elle dans le catalogue KEV (exploitation active connue) ?"
+      source: kev
+      values:
+        - match: true
+          value: 1.0
+        - default: 0.1
+      weight: 2
+
+    # Score CVSS / Sévérité GVM
+    - id: cvss
+      label: "Score CVSS"
+      description: "Sévérité technique de la vulnérabilité"
+      source: severity
+      normalize: scale_0_1
+      weight: 1
+
+  # Formule de calcul
+  # Les {variables} correspondent aux id des critères
+  # La formule est auto-générée mais peut être personnalisée
+  formula: "(({exposition} * 3) + ({anssi} * 1) + ({kev} * 2) + ({cvss} * 1)) / 7 * 100"
+  
+  # Poids total (somme des weights) - utilisé pour validation
+  total_weight: 7

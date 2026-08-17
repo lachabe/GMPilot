@@ -1,0 +1,92 @@
+{# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+{% extends "base.html" %}
+{% block title %}Rôles{% endblock %}
+{% block breadcrumb_content %}Administration — Rôles{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center mb-3 gap-2">
+  <h2 class="mb-0">Rôles</h2>
+  {% if has_perm("roles.create") %}
+  <a href="{{ url_for('admin.roles_create') }}" class="btn btn-primary btn-sm ms-auto">
+    <i class="ti ti-plus me-1"></i>Nouveau rôle
+  </a>
+  {% endif %}
+</div>
+
+{% if roles %}
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" style="font-size:0.85rem">
+      <thead>
+        <tr>
+          <th>Nom</th>
+          <th>ID</th>
+          <th>Description</th>
+          <th class="text-center">LDAP</th>
+          <th class="text-center">OIDC</th>
+          <th class="text-center">Permissions</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in roles %}
+        <tr>
+          <td class="fw-medium">{{ r.name }}</td>
+          <td><code class="small text-secondary">{{ r.id }}</code></td>
+          <td class="text-secondary small">{{ r.description or '—' }}</td>
+          <td class="text-center">
+            {% if r.matching.ldap.enabled %}
+            <span class="badge bg-green-lt"><i class="ti ti-check"></i> {{ r.matching.ldap.groups|length }} groupe(s)</span>
+            {% else %}
+            <span class="badge bg-secondary-lt">Désactivé</span>
+            {% endif %}
+          </td>
+          <td class="text-center">
+            {% if r.matching.oidc.enabled %}
+            <span class="badge bg-cyan-lt"><i class="ti ti-check"></i> {{ r.matching.oidc.groups|length }} groupe(s)</span>
+            {% else %}
+            <span class="badge bg-secondary-lt">Désactivé</span>
+            {% endif %}
+          </td>
+          <td class="text-center">
+            {% set active = r.permissions.values() | select | list | length %}
+            {% set total = r.permissions | length %}
+            <span class="badge bg-secondary-lt">{{ active }}/{{ total }}</span>
+          </td>
+          <td class="text-end">
+            {% if has_perm("roles.edit") %}
+            <a href="{{ url_for('admin.roles_edit', role_id=r.id) }}" class="btn btn-ghost-secondary btn-sm btn-icon" title="Modifier">
+              <i class="ti ti-pencil"></i>
+            </a>
+            {% endif %}
+            {% if has_perm("roles.delete") %}
+            <form method="POST" action="{{ url_for('admin.roles_delete', role_id=r.id) }}" class="d-inline"
+                  onsubmit="return confirm('Supprimer le rôle « {{ r.name }} » ?')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+              <button type="submit" class="btn btn-ghost-danger btn-sm btn-icon" title="Supprimer">
+                <i class="ti ti-trash"></i>
+              </button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="card"><div class="card-body">
+  <div class="empty">
+    <div class="empty-icon"><i class="ti ti-shield-lock"></i></div>
+    <p class="empty-title">Aucun rôle configuré</p>
+    <p class="empty-subtitle text-secondary">Créez un rôle pour contrôler les accès.</p>
+    {% if has_perm("roles.create") %}
+    <a href="{{ url_for('admin.roles_create') }}" class="btn btn-primary mt-2">
+      <i class="ti ti-plus me-1"></i>Créer le premier rôle
+    </a>
+    {% endif %}
+  </div>
+</div></div>
+{% endif %}
+{% endblock %}

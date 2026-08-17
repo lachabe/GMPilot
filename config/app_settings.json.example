@@ -1,0 +1,64 @@
+{
+  "deny_if_no_role": true,
+  "remediation_warn_days": 30,
+  "remediation_critical_days": 90,
+  "ticket_url": "https://glpi.example.com/front/ticket.form.php?id=<id>",
+  "scheduler_enabled": false,
+  "schedules": {
+    "tasks": {
+      "interval_hours": 168
+    },
+    "vulns": {
+      "interval_hours": 4
+    },
+    "hosts": {
+      "interval_hours": 24
+    },
+    "cve": {
+      "interval_hours": 0,
+      "after_vulns": true
+    },
+    "kev": {
+      "interval_hours": 24
+    },
+    "anssi": {
+      "interval_hours": 24
+    },
+    "targets": {
+      "interval_hours": 24
+    },
+    "schedules": {
+      "interval_hours": 24
+    },
+    "tags": {
+      "interval_hours": 24
+    },
+    "scanners": {
+      "interval_hours": 168
+    },
+    "port_lists": {
+      "interval_hours": 168
+    },
+    "feeds": {
+      "interval_hours": 168
+    },
+    "scan_configs": {
+      "interval_hours": 168
+    },
+    "cve_update": {
+      "interval_hours": 24
+    },
+    "cpe_dict": {
+      "interval_hours": 168
+    },
+    "cpe_watch": {
+      "interval_hours": 24
+    },
+    "iana": {
+      "interval_hours": 168
+    },
+    "dns": {
+      "interval_hours": 24
+    }
+  }
+}

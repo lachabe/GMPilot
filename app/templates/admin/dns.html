@@ -1,0 +1,202 @@
+{# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+{% extends "base.html" %}
+{% block title %}Résolutions DNS{% endblock %}
+{% block breadcrumb_content %}Administration — Résolutions DNS{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center mb-3 gap-2 flex-wrap">
+  <h2 class="mb-0">Résolutions DNS</h2>
+  <div class="d-flex gap-2 small align-items-center">
+    <span class="badge bg-green-lt">{{ stats.resolved }} résolus</span>
+    <span class="badge bg-secondary-lt">{{ stats.empty }} vides</span>
+    <span class="badge bg-blue-lt">{{ stats.manual }} manuels</span>
+    <span class="badge bg-secondary-lt">{{ stats.total }} au total</span>
+  </div>
+  <a href="{{ url_for('admin.dns_export_csv') }}" class="btn btn-outline-cyan btn-sm ms-auto">
+    <i class="ti ti-file-export me-1"></i>Export CSV
+  </a>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <div class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label small mb-1">Nouvelle adresse IP</label>
+        <input type="text" id="dns-add-ip" class="form-control form-control-sm" placeholder="10.0.0.1" style="width:160px">
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1">Hostname</label>
+        <input type="text" id="dns-add-host" class="form-control form-control-sm" placeholder="serveur.exemple.local" style="width:240px">
+      </div>
+      <div class="col-auto">
+        <button type="button" id="dns-add-btn" class="btn btn-primary btn-sm"><i class="ti ti-plus me-1"></i>Ajouter</button>
+      </div>
+      <div class="col"></div>
+      <div class="col-auto">
+        <label class="form-label small mb-1">Recherche</label>
+        <input type="text" id="dns-search" class="form-control form-control-sm" placeholder="IP ou hostname…" style="width:220px">
+      </div>
+      <div class="col-auto">
+        <label class="form-check mb-2">
+          <input type="checkbox" class="form-check-input" id="dns-empty-only">
+          <span class="form-check-label small">Vides uniquement</span>
+        </label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <details>
+      <summary style="cursor:pointer" class="fw-medium"><i class="ti ti-upload me-1"></i>Import en masse</summary>
+      <div class="mt-2">
+        <textarea id="dns-import-data" class="form-control form-control-sm font-monospace" rows="6"
+                  placeholder="Une ligne par entrée : IP;hostname&#10;10.0.0.1;serveur01&#10;10.0.0.2;serveur02"></textarea>
+        <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
+          <button type="button" id="dns-import-btn" class="btn btn-primary btn-sm"><i class="ti ti-upload me-1"></i>Importer (manuel)</button>
+          <span class="text-secondary small">Séparateur : <code>;</code>, <code>,</code> ou espace. Marque les entrées en manuel (écrase l'existant).</span>
+        </div>
+      </div>
+    </details>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" style="font-size:0.85rem">
+      <thead>
+        <tr>
+          <th style="width:180px">Adresse IP</th>
+          <th>Hostname</th>
+          <th style="width:110px" class="text-center">Source</th>
+          <th style="width:170px">Dernière résolution</th>
+          <th style="width:220px"></th>
+        </tr>
+      </thead>
+      <tbody id="dns-tbody">
+        {% for e in entries %}
+        {% set is_empty = not (e.hostname or '').strip() %}
+        <tr class="dns-row" data-ip="{{ e.ip }}"
+            data-search="{{ (e.ip ~ ' ' ~ (e.hostname or '')) | lower }}"
+            data-empty="{{ 1 if is_empty else 0 }}">
+          <td><code>{{ e.ip }}</code></td>
+          <td>
+            <input type="text" class="form-control form-control-sm dns-hostname"
+                   value="{{ e.hostname or '' }}" placeholder="— aucun PTR —">
+          </td>
+          <td class="text-center dns-source">
+            {% if e.manual %}<span class="badge bg-blue-lt">Manuel</span>
+            {% elif is_empty %}<span class="badge bg-secondary-lt">Vide</span>
+            {% else %}<span class="badge bg-green-lt">Auto</span>{% endif %}
+          </td>
+          <td class="text-secondary small dns-date">{{ e.resolved_at[:19] if e.resolved_at else '—' }}</td>
+          <td class="text-end">
+            <button type="button" class="btn btn-sm btn-primary dns-save"><i class="ti ti-device-floppy me-1"></i>Enregistrer</button>
+            <button type="button" class="btn btn-sm btn-ghost-secondary dns-reset"
+                    title="Supprimer : sera re-résolu automatiquement au prochain scan"><i class="ti ti-rotate"></i></button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not entries %}
+  <div class="card-body text-secondary text-center py-4">
+    Aucune adresse en cache. Lancez une résolution DNS depuis la <a href="{{ url_for('cache.index') }}">synchronisation</a>.
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+  const csrf = () => document.body.dataset.csrfToken || '';
+
+  async function post(url, data) {
+    const body = new URLSearchParams(Object.assign({ csrf_token: csrf() }, data));
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': csrf(), 'X-Requested-With': 'XMLHttpRequest',
+                 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+    let j = {};
+    try { j = await resp.json(); } catch (e) {}
+    if (!resp.ok || !j.ok) throw new Error(j.error || ('HTTP ' + resp.status));
+    return j;
+  }
+
+  function flash(btn, ok) {
+    const orig = btn.className;
+    btn.className = orig.replace(/btn-\S+/, ok ? 'btn-success' : 'btn-danger');
+    setTimeout(() => { btn.className = orig; }, 1200);
+  }
+
+  // Enregistrer une ligne
+  document.getElementById('dns-tbody').addEventListener('click', async function (ev) {
+    const saveBtn = ev.target.closest('.dns-save');
+    const resetBtn = ev.target.closest('.dns-reset');
+    if (saveBtn) {
+      const row = saveBtn.closest('.dns-row');
+      const ip = row.dataset.ip;
+      const host = row.querySelector('.dns-hostname').value.trim();
+      try {
+        await post('{{ url_for("admin.dns_save") }}', { ip, hostname: host });
+        row.dataset.empty = host ? '0' : '1';
+        row.dataset.search = (ip + ' ' + host).toLowerCase();
+        row.querySelector('.dns-source').innerHTML = '<span class="badge bg-blue-lt">Manuel</span>';
+        row.querySelector('.dns-date').textContent = new Date().toISOString().slice(0, 19).replace('T', ' ');
+        flash(saveBtn, true);
+      } catch (e) { flash(saveBtn, false); alert('Erreur : ' + e.message); }
+    } else if (resetBtn) {
+      const row = resetBtn.closest('.dns-row');
+      const ip = row.dataset.ip;
+      if (!confirm('Réinitialiser ' + ip + ' ? L\'entrée sera supprimée et re-résolue au prochain scan.')) return;
+      try {
+        await post('{{ url_for("admin.dns_reset") }}', { ip });
+        row.remove();
+      } catch (e) { flash(resetBtn, false); alert('Erreur : ' + e.message); }
+    }
+  });
+
+  // Ajouter une IP
+  document.getElementById('dns-add-btn').addEventListener('click', async function () {
+    const ip = document.getElementById('dns-add-ip').value.trim();
+    const host = document.getElementById('dns-add-host').value.trim();
+    if (!ip) { alert('Adresse IP requise.'); return; }
+    try {
+      await post('{{ url_for("admin.dns_save") }}', { ip, hostname: host });
+      location.reload();
+    } catch (e) { alert('Erreur : ' + e.message); }
+  });
+
+  // Import en masse
+  document.getElementById('dns-import-btn').addEventListener('click', async function () {
+    const data = document.getElementById('dns-import-data').value;
+    if (!data.trim()) { alert('Collez des lignes « IP;hostname ».'); return; }
+    try {
+      const j = await post('{{ url_for("admin.dns_import") }}', { data });
+      alert(j.imported + ' entrée(s) importée(s)' + (j.invalid ? (', ' + j.invalid + ' ignorée(s)') : ''));
+      location.reload();
+    } catch (e) { alert('Erreur : ' + e.message); }
+  });
+
+  // Filtres (recherche + vides uniquement)
+  const search = document.getElementById('dns-search');
+  const emptyOnly = document.getElementById('dns-empty-only');
+  function applyFilter() {
+    const q = search.value.trim().toLowerCase();
+    const eo = emptyOnly.checked;
+    document.querySelectorAll('#dns-tbody .dns-row').forEach(function (row) {
+      const okQ = !q || (row.dataset.search || '').includes(q);
+      const okE = !eo || row.dataset.empty === '1';
+      row.style.display = (okQ && okE) ? '' : 'none';
+    });
+  }
+  search.addEventListener('input', applyFilter);
+  emptyOnly.addEventListener('change', applyFilter);
+})();
+</script>
+{% endblock %}

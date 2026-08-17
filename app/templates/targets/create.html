@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Nouvelle cible{% endblock %}
+{% block breadcrumb_content %}Nouvelle cible{% endblock %}
+{% block page_actions %}<a href="{{ url_for('targets.index') }}" class="btn btn-ghost-secondary btn-sm"><i class="ti ti-arrow-left me-1"></i>Retour</a>{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center"><div class="col-lg-8 col-xl-6">
+  <div class="card">
+    <div class="card-header"><h3 class="card-title"><i class="ti ti-target me-2"></i>Définition de la cible</h3></div>
+    <div class="card-body">
+      <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+        <div class="mb-3">
+          <label class="form-label required">Nom</label>
+          <input type="text" name="name" class="form-control" placeholder="ex: Réseau DMZ" required/>
+        </div>
+        <div class="mb-3">
+          <label class="form-label required">Hôtes</label>
+          <input type="text" name="hosts" class="form-control" placeholder="192.168.1.0/24, 10.0.0.1" required/>
+          <small class="form-hint">IPs, plages CIDR ou noms d'hôtes séparés par des virgules</small>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Hôtes exclus</label>
+          <input type="text" name="exclude_hosts" class="form-control" placeholder="192.168.1.1, 192.168.1.255"/>
+        </div>
+        <div class="mb-3">
+          <label class="form-label required">Liste de ports</label>
+          <select name="port_list_id" class="form-select" required>
+            <option value="">— Sélectionner —</option>
+            {% for p in port_lists %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Commentaire</label>
+          <textarea name="comment" class="form-control" rows="2"></textarea>
+        </div>
+        <div class="d-flex gap-2">
+          <button type="submit" class="btn btn-primary"><i class="ti ti-plus me-1"></i>Créer</button>
+          <a href="{{ url_for('targets.index') }}" class="btn btn-ghost-secondary">Annuler</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div></div>
+{% endblock %}

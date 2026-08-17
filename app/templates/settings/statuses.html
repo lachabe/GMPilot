@@ -1,0 +1,137 @@
+{# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+{% extends "base.html" %}
+{% block title %}Statuts{% endblock %}
+{% block breadcrumb_content %}Administration — Statuts{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center mb-3 gap-2">
+  <div>
+    <h2 class="mb-0">Statuts de vulnérabilités</h2>
+    <div class="text-secondary small">Statuts personnalisables + leurs comportements (visibilité, collant, auto-résolution) et champs à saisir.</div>
+  </div>
+  {% if has_perm("settings.general_edit") %}
+  <a href="{{ url_for('settings.statuses_create') }}" class="btn btn-primary btn-sm ms-auto">
+    <i class="ti ti-plus me-1"></i>Nouveau statut
+  </a>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" style="font-size:0.85rem">
+      <thead>
+        <tr>
+          {% if has_perm("settings.general_edit") %}<th class="text-center" style="width:1%" title="Réordonner">Ordre</th>{% endif %}
+          <th>Statut</th>
+          <th>Visibilité</th>
+          <th class="text-center">Collant</th>
+          <th class="text-center">Auto-résolu</th>
+          <th>Champs</th>
+          <th class="text-center">Verrouillé</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="statusRows">
+        {% for s in statuses %}
+        <tr data-status-id="{{ s.id }}"{% if not s.fixed %} class="movable"{% endif %}>
+          {% if has_perm("settings.general_edit") %}
+          <td class="text-center" style="white-space:nowrap">
+            {% if s.fixed %}
+              <i class="ti ti-pin text-secondary" title="Position figée"></i>
+            {% else %}
+              <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-ghost-secondary btn-icon status-up" title="Monter"><i class="ti ti-chevron-up"></i></button>
+                <button type="button" class="btn btn-ghost-secondary btn-icon status-down" title="Descendre"><i class="ti ti-chevron-down"></i></button>
+              </div>
+            {% endif %}
+          </td>
+          {% endif %}
+          <td>
+            <span class="badge bg-{{ s.color }}-lt"><i class="ti {{ s.icon }} me-1"></i>{{ s.label }}</span>
+            <div class="text-secondary small mt-1"><code>{{ s.id }}</code></div>
+          </td>
+          <td>
+            {% if s.scope == 'open' %}<span class="badge bg-secondary-lt">Ouvert</span> <span class="text-secondary small">Synthèse/Brute</span>
+            {% else %}<span class="badge bg-green-lt">Fermé</span> <span class="text-secondary small">Résolues</span>{% endif %}
+          </td>
+          <td class="text-center">{% if s.sticky %}<i class="ti ti-check text-green"></i>{% else %}<i class="ti ti-minus text-secondary"></i>{% endif %}</td>
+          <td class="text-center">{% if s.auto_resolve %}<i class="ti ti-check text-green"></i>{% else %}<i class="ti ti-minus text-secondary"></i>{% endif %}</td>
+          <td>
+            {% if s.fields %}
+              {% for f in s.fields %}<span class="badge bg-secondary-lt me-1" title="{{ f.type }}">{{ f.label }}{% if f.required %} <span class="text-danger">*</span>{% endif %}</span>{% endfor %}
+            {% else %}<span class="text-secondary">—</span>{% endif %}
+          </td>
+          <td class="text-center">{% if s.fixed %}<i class="ti ti-lock text-secondary" title="Statut intégré : comportement verrouillé, non supprimable"></i>{% else %}<i class="ti ti-lock-open text-secondary"></i>{% endif %}</td>
+          <td class="text-end" style="white-space:nowrap">
+            {% if has_perm("settings.general_edit") %}
+            <a href="{{ url_for('settings.statuses_edit', status_id=s.id) }}" class="btn btn-ghost-secondary btn-sm btn-icon" title="Modifier"><i class="ti ti-edit"></i></a>
+            {% if not s.fixed %}
+            <form method="POST" action="{{ url_for('settings.statuses_delete', status_id=s.id) }}" class="d-inline" onsubmit="return confirm('Supprimer le statut « {{ s.label }} » ? Les vulnérabilités qui le portent repasseront en actif.');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+              <button type="submit" class="btn btn-ghost-danger btn-sm btn-icon" title="Supprimer"><i class="ti ti-trash"></i></button>
+            </form>
+            {% endif %}
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+{% if has_perm("settings.general_edit") %}
+<script>
+(function () {
+  const tbody = document.getElementById('statusRows');
+  if (!tbody) return;
+  const csrf = document.body.dataset.csrfToken || '';
+  const url = "{{ url_for('settings.statuses_reorder') }}";
+
+  function movable() { return Array.from(tbody.querySelectorAll('tr.movable')); }
+
+  function refreshDisabled() {
+    const mv = movable();
+    mv.forEach(function (r, i) {
+      const up = r.querySelector('.status-up'), dn = r.querySelector('.status-down');
+      if (up) up.disabled = (i === 0);
+      if (dn) dn.disabled = (i === mv.length - 1);
+    });
+  }
+
+  function persist() {
+    const order = Array.from(tbody.querySelectorAll('tr[data-status-id]')).map(function (r) { return r.dataset.statusId; });
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+      body: JSON.stringify({ order: order }),
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j.ok) window.showToast('Réordonnancement impossible.', 'danger');
+    }).catch(function () { window.showToast('Erreur réseau lors du réordonnancement.', 'danger'); });
+  }
+
+  tbody.addEventListener('click', function (e) {
+    const btn = e.target.closest('.status-up, .status-down');
+    if (!btn || btn.disabled) return;
+    const row = btn.closest('tr');
+    const mv = movable();
+    const idx = mv.indexOf(row);
+    if (idx < 0) return;
+    if (btn.classList.contains('status-up') && idx > 0) {
+      row.parentNode.insertBefore(row, mv[idx - 1]);
+    } else if (btn.classList.contains('status-down') && idx < mv.length - 1) {
+      row.parentNode.insertBefore(mv[idx + 1], row);
+    } else {
+      return;
+    }
+    refreshDisabled();
+    persist();
+  });
+
+  refreshDisabled();
+})();
+</script>
+{% endif %}
+{% endblock %}

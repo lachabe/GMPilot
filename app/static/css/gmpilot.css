@@ -1,0 +1,117 @@
+/* ── Éviter le FOIT sur les icônes Tabler ── */
+@font-face {
+  font-family: "tabler-icons";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("/static/vendor/fonts/tabler-icons.woff2") format("woff2"),
+       url("/static/vendor/fonts/tabler-icons.woff") format("woff"),
+       url("/static/vendor/fonts/tabler-icons.ttf") format("truetype");
+}
+
+/* ── base ── */
+.sev-critical{color:#9e1b1b!important;font-weight:700}
+    .sev-high{color:#d63939!important}
+    .sev-medium{color:#f76707!important}
+    .sev-low{color:#fab005!important}
+    .sev-log{color:#667382!important}
+    .badge-critical{background:rgba(158,27,27,.15);color:#9e1b1b;border:1px solid rgba(158,27,27,.4)}
+    .badge-high{background:rgba(214,57,57,.15);color:#d63939;border:1px solid rgba(214,57,57,.4)}
+    .badge-medium{background:rgba(247,103,7,.15);color:#f76707;border:1px solid rgba(247,103,7,.4)}
+    .badge-low{background:rgba(250,176,5,.15);color:#e67700;border:1px solid rgba(250,176,5,.4)}
+    .badge-log{background:rgba(102,115,130,.12);color:#667382;border:1px solid rgba(102,115,130,.3)}
+    .nav-heading{font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;color:var(--tblr-secondary);font-weight:700;padding:.5rem 1rem;margin-top:.5rem}
+
+/* ── cache ── */
+.toast-container { position: fixed; top: 1rem; right: 1rem; z-index: 1080; }
+.task-status { transition: all 0.3s ease; }
+.card.task-running { border-color: var(--tblr-info) !important; }
+.card.task-running .card-header { background: rgba(var(--tblr-info-rgb), 0.1); }
+
+/* ── vulns ── */
+.score-gauge { width: 60px; height: 6px; background: #e0e0e0; border-radius: 3px; overflow: hidden; }
+.score-gauge-fill { height: 100%; border-radius: 3px; }
+.synth-product-table { width: 100%; border-collapse: collapse; }
+.synth-product-table th:hover { color: var(--tblr-body-color); }
+.synth-product-table th .sort-icon { margin-left: 4px; opacity: 0.4; font-size: 0.65rem; }
+.synth-product-table th.sort-asc .sort-icon,
+.synth-product-table th.sort-desc .sort-icon { opacity: 1; color: var(--tblr-primary); }
+.synth-product-table td { padding: 0.3rem 0.6rem; border-bottom: 1px solid var(--tblr-border-color-translucent); vertical-align: middle; }
+.synth-product-table tbody tr { cursor: pointer; transition: background .1s; }
+.synth-product-table tbody tr:hover { background: var(--tblr-active-bg); }
+.synth-product-table tbody tr.is-open { background: var(--tblr-active-bg); }
+.synth-product-table td.col-name { font-weight: 500; }
+.synth-product-table td.col-num { text-align: center; }
+.synth-product-table th.col-num { text-align: center; }
+.synth-product-table td.col-actions { text-align: right; white-space: nowrap; }
+.synth-vendor-row {
+  display: grid;
+  grid-template-columns: 1fr 80px 90px 90px 90px 90px 44px;
+  align-items: center;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border-bottom: 1px solid var(--tblr-border-color);
+  transition: background 0.1s;
+}
+.synth-vendor-row:hover { background: var(--tblr-active-bg); }
+.synth-vendor-row.is-open { background: var(--tblr-active-bg); }
+.synth-vendor-col-header {
+  display: grid;
+  grid-template-columns: 1fr 80px 90px 90px 90px 90px 44px;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--tblr-secondary);
+  border-bottom: 2px solid var(--tblr-border-color);
+  background: var(--tblr-bg-surface-secondary);
+}
+.synth-vendor-col { text-align: center; }
+.synth-vendor-col:first-child { text-align: left; }
+/* Barre de filtres synthèse : égaliser la hauteur des boutons sur celle des champs form-*-sm */
+#synth-export, #synth-reset {
+  min-height: calc(1.25rem + .625rem + calc(var(--tblr-border-width) * 2));
+  display: inline-flex;
+  align-items: center;
+}
+.synth-toggle-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 4px;
+  border: 1px solid var(--tblr-border-color);
+  background: transparent; cursor: pointer;
+  color: var(--tblr-secondary);
+  transition: transform 0.2s, background 0.1s;
+  margin-left: auto;
+}
+.synth-toggle-btn:hover { background: var(--tblr-active-bg); color: var(--tblr-body-color); }
+.synth-toggle-btn.is-open { transform: rotate(180deg); }
+.synth-vendor-body { display: none; border-bottom: 2px solid var(--tblr-border-color); }
+.synth-vendor-body.is-open { display: block; }
+
+/* Product accordion inside vendor */
+/* synth-product-row/body styles moved to synth-product-table CSS */
+
+/* Table inside product */
+.synth-inner-table { font-size: 0.76rem; }
+.synth-inner-table th { font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+
+/* ── scoring ── */
+.criterion-card { border:1px solid var(--tblr-border-color); border-radius:var(--tblr-border-radius); margin-bottom:.75rem; background:var(--tblr-bg-surface); }
+.criterion-header { display:flex; align-items:center; gap:.5rem; padding:.5rem .75rem; background:var(--tblr-bg-surface-secondary); border-radius:var(--tblr-border-radius) var(--tblr-border-radius) 0 0; cursor:pointer; border-bottom:1px solid var(--tblr-border-color); }
+.criterion-body { padding:.75rem; }
+.value-row { display:grid; grid-template-columns:auto 1fr 80px 28px; gap:.5rem; align-items:center; margin-bottom:.35rem; }
+.formula-input { font-family:var(--tblr-font-monospace); font-size:.85rem; }
+.preview-table { font-size:.78rem; }
+.score-pill { display:inline-block; min-width:42px; text-align:center; padding:.15rem .4rem; border-radius:4px; font-weight:600; font-size:.75rem; }
+.drag-handle { cursor:grab; color:var(--tblr-secondary); padding:0 4px; }
+.formula-status { font-size:.75rem; margin-top:.25rem; }
+
+/* ── nav collapse ── */
+.nav-collapse-indicator { transition: transform .2s ease; font-size: .7rem; display: inline-block; }
+.nav-link[aria-expanded="true"] .nav-collapse-indicator { transform: rotate(90deg) !important; }
+#nav-gvm .nav-link, #nav-admin .nav-link { padding-left: 2.75rem; font-size: .82rem; }
+
+/* ── feeds ── */
+@keyframes spin{to{transform:rotate(360deg)}}.spin{animation:spin 1s linear infinite}

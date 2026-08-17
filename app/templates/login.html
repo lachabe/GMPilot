@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="fr" data-bs-theme="dark">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Connexion — {{ APP_NAME }}</title>
+  <link rel="stylesheet" href="/static/vendor/tabler-1.4.0.min.css"/>
+  <link rel="stylesheet" href="/static/vendor/tabler-icons-3.26.0.min.css"/>
+</head>
+<body class="d-flex flex-column">
+<div class="page page-center">
+  <div class="container container-tight py-4">
+
+    <!-- Logo -->
+    <div class="text-center mb-4">
+      <img src="{{ url_for('static', filename='img/logo.svg') }}"
+           alt="GMPilot" height="80" width="80" class="mb-3"
+           style="filter:drop-shadow(0 0 4px #0ea5e944)"/>
+      <h1 class="fw-bold">{{ APP_NAME }}</h1>
+      <p class="text-secondary">Interface de gestion GVM / OpenVAS</p>
+    </div>
+
+    <!-- Toast container -->
+    <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index:1080" id="toast-container"></div>
+    <!-- Flash messages → toasts -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <script type="application/json" id="login-flash-data">{{ messages | tojson }}</script>
+    {% endif %}
+    {% endwith %}
+
+    <!-- Login form -->
+    <div class="card card-md">
+      <div class="card-body">
+        <h2 class="h2 text-center mb-4">Connexion</h2>
+        
+        <!-- OIDC Login -->
+        {% if backend_name == 'oidc' %}
+        <div class="text-center">
+          <a href="{{ url_for('auth.login_oidc') }}" class="btn btn-cyan btn-lg w-100">
+            <i class="ti ti-brand-openid me-2"></i>
+            Se connecter via OIDC
+          </a>
+        </div>
+        
+        <!-- GMP/LDAP Login Form -->
+        {% else %}
+        <form method="POST" autocomplete="off">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+          <div class="mb-3">
+            <label class="form-label">
+              <i class="ti ti-user me-1"></i> 
+              {% if backend_name == 'ldap' %}
+                Identifiant LDAP
+              {% else %}
+                Identifiant GVM
+              {% endif %}
+            </label>
+            <input type="text" name="username" class="form-control" placeholder="admin"
+                   required autofocus autocomplete="username"/>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">
+              <i class="ti ti-lock me-1"></i> Mot de passe
+            </label>
+            <div class="input-group input-group-flat">
+              <input type="password" name="password" class="form-control" placeholder="••••••••"
+                     required autocomplete="current-password" id="pwdInput"/>
+              <span class="input-group-text" style="cursor:pointer" id="pwdToggle">
+                <i class="ti ti-eye" id="pwdIcon"></i>
+              </span>
+            </div>
+          </div>
+          <div class="form-footer">
+            <button type="submit" class="btn btn-cyan w-100">
+              <i class="ti ti-login me-1"></i> Se connecter
+            </button>
+          </div>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="text-center text-secondary mt-3" style="font-size:.75rem">
+      {{ APP_NAME }} v{{ APP_VERSION }}
+    </div>
+  </div>
+</div>
+
+<script src="/static/vendor/tabler-1.4.0.min.js"></script>
+
+<script src="{{ url_for('static', filename='js/login.js') }}"></script>
+</body>
+</html>

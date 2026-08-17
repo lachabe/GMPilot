@@ -1,0 +1,83 @@
+{# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+{% extends "base.html" %}
+{% from "macros/cache.html" import cache_banner %}
+{% from "macros/pagination.html" import paginate %}
+{% block title %}Hôtes{% endblock %}
+{% block breadcrumb_content %}Hôtes découverts{% endblock %}
+
+{% block page_actions %}
+<input type="text" id="hostSearch" class="form-control form-control-sm d-inline-block" placeholder="Rechercher IP / nom…" style="width:200px"/>
+{% endblock %}
+
+{% block content %}
+{{ cache_banner(cache_meta("hosts")) }}
+<div class="card">
+  {% if hosts %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" id="hostsTable">
+      <thead><tr><th>IP / Nom</th><th>OS</th><th>Sévérité</th><th>Dernière vue</th><th class="w-1"></th></tr></thead>
+      <tbody>
+        {% for h in hosts %}
+        <tr data-name="{{ h.name|lower }} {{ h.ip|lower }}">
+          <td class="fw-medium">
+            <a href="{{ url_for('assets.host_detail', host_id=h.id) }}" class="text-reset text-decoration-none">
+              <i class="ti ti-server text-cyan me-1"></i>{{ h.name }}
+            </a>
+          </td>
+          <td class="text-secondary small">{{ h.os }}</td>
+          <td>
+            {% set sev = h.severity|float %}
+            {% if sev >= 9.0 %}<span class="badge badge-critical">{{ "%.1f"|format(sev) }}</span>
+            {% elif sev >= 7.0 %}<span class="badge badge-high">{{ "%.1f"|format(sev) }}</span>
+            {% elif sev >= 4.0 %}<span class="badge badge-medium">{{ "%.1f"|format(sev) }}</span>
+            {% elif sev > 0 %}<span class="badge badge-low">{{ "%.1f"|format(sev) }}</span>
+            {% else %}<span class="badge bg-secondary-lt">0.0</span>{% endif %}
+          </td>
+          <td class="text-secondary">{{ (h.last_seen or "—")[:16] }}</td>
+          <td>
+            <div class="d-flex gap-1">
+              <a href="{{ url_for('assets.host_detail', host_id=h.id) }}" class="btn btn-ghost-secondary btn-icon btn-sm"><i class="ti ti-eye"></i></a>
+              <button class="btn btn-ghost-secondary btn-icon btn-sm" onclick="openTagModal('{{ h.id }}','{{ h.name }}')" title="Tag"><i class="ti ti-tag"></i></button>
+              <form method="POST" action="{{ url_for('assets.delete_host', host_id=h.id) }}" class="d-inline" onsubmit="return confirm('Supprimer ?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button type="submit" class="btn btn-ghost-danger btn-icon btn-sm"><i class="ti ti-trash"></i></button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ paginate(hosts, page, per_page, total, 'assets.hosts') }}
+  {% else %}
+  <div class="card-body"><div class="empty"><div class="empty-icon"><i class="ti ti-server"></i></div><p class="empty-title">Aucun hôte découvert</p></div></div>
+  {% endif %}
+</div>
+
+<!-- Tag modal -->
+<div class="modal modal-blur fade" id="tagModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">Assigner un tag</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div class="text-secondary small mb-3" id="tagModalSub"></div>
+        <form method="POST" id="tagAssignForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+          <input type="hidden" name="host_id" id="tagHostId"/>
+          <div class="mb-3"><label class="form-label">Tag</label><select class="form-select" id="tagSelect"><option value="">— Choisir —</option></select></div>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary btn-sm"><i class="ti ti-tag me-1"></i>Assigner</button>
+            <a href="{{ url_for('tags.create') }}" class="btn btn-ghost-secondary btn-sm ms-auto"><i class="ti ti-plus me-1"></i>Nouveau</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/assets_hosts.js') }}"></script>
+
+{% endblock %}

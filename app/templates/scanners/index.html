@@ -1,0 +1,37 @@
+{# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+{% extends "base.html" %}
+{% from "macros/cache.html" import cache_banner %}
+{% block title %}Scanners{% endblock %}
+{% block breadcrumb_content %}Scanners{% endblock %}
+{% block content %}
+{{ cache_banner(cache_meta("scanners")) }}
+<div class="card">
+  {% if scanners %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead><tr><th>Nom</th><th>Hôte</th><th>Port</th><th>Type</th><th>Commentaire</th><th class="w-1"></th></tr></thead>
+      <tbody>
+        {% for s in scanners %}
+        <tr>
+          <td class="fw-medium"><i class="ti ti-scan text-cyan me-1"></i>{{ s.name }}</td>
+          <td><code>{{ s.host }}</code></td>
+          <td class="text-secondary">{{ s.port }}</td>
+          <td><span class="badge bg-secondary-lt">{{ s.type }}</span></td>
+          <td class="text-secondary">{{ s.comment or "—" }}</td>
+          <td><div class="d-flex gap-1">
+            <a href="{{ url_for('scanners.edit', scanner_id=s.id) }}" class="btn btn-ghost-secondary btn-icon btn-sm"><i class="ti ti-edit"></i></a>
+            <form method="POST" action="{{ url_for('scanners.verify', scanner_id=s.id) }}" class="d-inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+              <button type="submit" class="btn btn-ghost-success btn-icon btn-sm" title="Vérifier"><i class="ti ti-circle-check"></i></button>
+            </form>
+          </div></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card-body"><div class="empty"><div class="empty-icon"><i class="ti ti-scan"></i></div><p class="empty-title">Aucun scanner</p></div></div>
+  {% endif %}
+</div>
+{% endblock %}

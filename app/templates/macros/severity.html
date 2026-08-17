@@ -1,0 +1,12 @@
+{% macro sev_badge(sev_class, label=None) %}
+  {% set icons = {'critical':'ti-radiation','high':'ti-alert-octagon','medium':'ti-alert-triangle','low':'ti-info-circle','log':'ti-minus'} %}
+  {% set labels = {'critical':'Critical','high':'High','medium':'Medium','low':'Low','log':'Log'} %}
+  {% set l = label or labels.get(sev_class, sev_class) %}
+  <span class="badge badge-{{ sev_class }}">
+    <i class="ti {{ icons.get(sev_class, 'ti-bug') }} me-1"></i>{{ l }}
+  </span>
+{% endmacro %}
+
+{% macro sev_score(sev_class, score) %}
+  <span class="sev-{{ sev_class }}">{{ "%.1f"|format(score|float) }}</span>
+{% endmacro %}

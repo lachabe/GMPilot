@@ -1,0 +1,669 @@
+{% extends "base.html" %}
+{% from "macros/cache.html" import cache_banner %}
+{% from "macros/sorting.html" import sortable_header %}
+{% from "macros/pagination.html" import paginate %}
+
+{# Badge du statut d'une vuln (def dynamique : libellé/icône/couleur ; ticket cliquable) #}
+{% macro treat_status(v, status_map, ticket_url) -%}
+  {%- set sd = status_map.get(v.status) -%}
+  {%- if sd and v.status != 'active' -%}
+    {%- set tk = (v.status_data.get('ticket_number') if v.status_data else '') or '' -%}
+    {%- if tk and ticket_url and '<id>' in ticket_url -%}
+      <a href="{{ ticket_url.replace('<id>', tk) }}" target="_blank" rel="noopener" class="badge bg-{{ sd.color }}-lt text-decoration-none" title="{{ sd.label }} — {{ tk }}"><i class="ti {{ sd.icon }} me-1"></i>{{ sd.label }} · {{ tk }}</a>
+    {%- else -%}
+      <span class="badge bg-{{ sd.color }}-lt" title="{{ sd.label }}"><i class="ti {{ sd.icon }} me-1"></i>{{ sd.label }}{% if tk %} · {{ tk }}{% endif %}</span>
+    {%- endif -%}
+  {%- else -%}
+    <span class="text-secondary small">Actif</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{# Numéro de ticket cliquable (si ticket_url défini) #}
+{% macro ticket_link(ticket, ticket_url) -%}
+  {%- if ticket_url and '<id>' in ticket_url -%}
+    <a href="{{ ticket_url.replace('<id>', ticket) }}" target="_blank" rel="noopener" class="fw-semibold text-decoration-none" onclick="event.stopPropagation()"><i class="ti ti-ticket me-1"></i>{{ ticket }}</a>
+  {%- else -%}
+    <span class="fw-semibold"><i class="ti ti-ticket me-1"></i>{{ ticket }}</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro sev_badge(s) -%}
+  {%- if s >= 9.0 -%}<span class="badge badge-critical">{{ "%.1f"|format(s) }}</span>
+  {%- elif s >= 7.0 -%}<span class="badge badge-high">{{ "%.1f"|format(s) }}</span>
+  {%- elif s >= 4.0 -%}<span class="badge badge-medium">{{ "%.1f"|format(s) }}</span>
+  {%- elif s > 0 -%}<span class="badge badge-low">{{ "%.1f"|format(s) }}</span>
+  {%- else -%}<span class="text-secondary">—</span>{%- endif -%}
+{%- endmacro %}
+
+{% macro score_badge(sc) -%}
+  <span class="badge {% if sc >= 70 %}badge-critical{% elif sc >= 50 %}badge-high{% elif sc >= 30 %}badge-medium{% else %}badge-low{% endif %}">{{ "%.0f"|format(sc) }}</span>
+{%- endmacro %}
+{% block title %}Vulnérabilités{% endblock %}
+{% block breadcrumb_content %}Vulnérabilités{% endblock %}
+
+
+{% block content %}
+{{ cache_banner(cache_meta("vulns")) }}
+<div class="toast-container" id="toast-container"></div>
+
+<!-- Stats bar -->
+<div class="mb-2 d-flex align-items-center gap-2 flex-wrap">
+  <!-- Stats vue vulnérabilités (synthèse) -->
+  <span id="stats-grouped" class="text-secondary small" style="display:none">
+    <span id="synth-stat-vulns">{{ groups|map(attribute='total_vulns')|sum }}</span> vulns · <span id="synth-stat-products">{{ groups|map(attribute='products')|map('length')|sum }}</span> produits · <span id="synth-stat-vendors">{{ groups|length }}</span> vendors
+  </span>
+  <!-- Stats vue tickets -->
+  <span id="stats-tickets" class="text-secondary small" style="display:none">
+    {{ tickets|length }} ticket(s) · {{ tickets|map(attribute='count')|sum }} vulnérabilité(s) en cours
+  </span>
+  <!-- Stats vue résolues -->
+  <span id="stats-resolved" class="text-secondary small" style="display:none">
+    <span id="resolved-stats-text">Chargement...</span>
+  </span>
+  {% if avg_score is defined %}
+  <span class="badge {% if avg_score >= 70 %}badge-critical{% elif avg_score >= 50 %}badge-high{% elif avg_score >= 30 %}badge-medium{% else %}badge-low{% endif %}" title="Score moyen de priorisation"><i class="ti ti-chart-bar me-1"></i>Score moy. {{ avg_score }}</span>
+  {% endif %}
+  {% if with_euvd_count > 0 %}
+  <span class="badge bg-cyan-lt"><i class="ti ti-database me-1"></i>{{ with_euvd_count }} enrichis EUVD</span>
+  {% endif %}
+  {% if exploited_count > 0 %}
+  <span class="badge bg-red-lt"><i class="ti ti-alert-triangle me-1"></i>{{ exploited_count }} exploités</span>
+  {% endif %}
+  {% if selected_tasks %}
+  <a href="{{ url_for('vulns.index') }}" class="badge bg-azure-lt text-decoration-none" title="Retirer le filtre par tâche(s)"><i class="ti ti-radar-2 me-1"></i>{{ selected_tasks|length }} tâche(s) filtrée(s) <i class="ti ti-x ms-1"></i></a>
+  {% endif %}
+</div>
+
+<!-- Tabs -->
+<div class="mb-0" style="border:1px solid var(--tblr-border-color);border-bottom:none;border-radius:var(--tblr-border-radius) var(--tblr-border-radius) 0 0;background:var(--tblr-bg-surface);padding:0 0.5rem">
+  <div style="display:flex;gap:0;align-items:center">
+    <a id="tab-grouped" href="#" data-tab="grouped"
+       style="display:inline-flex;align-items:center;padding:.55rem .75rem;font-size:.8rem;font-weight:500;border-bottom:2px solid transparent;color:var(--tblr-secondary);text-decoration:none;transition:color .15s,border-color .15s">
+      <i class="ti ti-layout-grid me-1"></i>Vulnérabilités
+      {% set _total_vulns = groups|map(attribute='total_vulns')|sum %}
+      {% if _total_vulns %} <span class="badge bg-secondary-lt ms-1">{{ _total_vulns }}</span>{% endif %}
+    </a>
+    <a id="tab-tickets" href="#" data-tab="tickets"
+       style="display:inline-flex;align-items:center;padding:.55rem .75rem;font-size:.8rem;font-weight:500;border-bottom:2px solid transparent;color:var(--tblr-secondary);text-decoration:none;transition:color .15s,border-color .15s">
+      <i class="ti ti-ticket me-1"></i>Tickets{% if tickets %} <span class="badge bg-blue-lt ms-1">{{ tickets|length }}</span>{% endif %}
+    </a>
+    <a id="tab-resolved" href="#" data-tab="resolved"
+       style="display:inline-flex;align-items:center;padding:.55rem .75rem;font-size:.8rem;font-weight:500;border-bottom:2px solid transparent;color:var(--tblr-secondary);text-decoration:none;transition:color .15s,border-color .15s">
+      <i class="ti ti-circle-check me-1"></i>Résolues{% if resolved_count %} <span class="badge bg-green-lt ms-1">{{ resolved_count }}</span>{% endif %}
+    </a>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:.25rem">
+      <button type="button" id="synth-export" class="btn btn-outline-cyan btn-sm" title="Exporter la synthèse filtrée en CSV"><i class="ti ti-file-export me-1"></i>Export CSV</button>
+      <button type="button" id="filters-toggle" class="btn btn-outline-secondary btn-sm" title="Afficher / masquer les filtres"><i class="ti ti-filter me-1"></i>Filtre</button>
+    </div>
+  </div>
+</div>
+
+<!-- Filtres : Synthèse -->
+<div id="filters-grouped" class="card mb-3 tab-filters" style="display:none;border-radius:0 0 var(--tblr-border-radius) var(--tblr-border-radius)">
+  <div class="card-body py-2">
+    <div class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label small mb-1">Vendor</label>
+        <select id="synth-vendor" class="form-select form-select-sm" style="min-width:160px">
+          <option value="">Tous les vendors</option>
+          {% for v in filter_options.vendors %}
+          <option value="{{ v }}">{{ v }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1">Product / NVT</label>
+        <select id="synth-product" class="form-select form-select-sm" style="min-width:160px">
+          <option value="">Tous les produits</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1">Score min</label>
+        <input type="number" id="synth-score" min="0" max="100" step="1" class="form-control form-control-sm" style="width:70px" placeholder="0"/>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1">Sév. min</label>
+        <input type="number" id="synth-sevmin" min="0" max="10" step="0.1" class="form-control form-control-sm" style="width:68px" placeholder="0"/>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1">Sév. max</label>
+        <input type="number" id="synth-sevmax" min="0" max="10" step="0.1" class="form-control form-control-sm" style="width:68px" placeholder="10"/>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1">Statut</label>
+        <select id="synth-status" class="form-select form-select-sm" style="min-width:160px">
+          <option value="">Tous</option>
+          <option value="in_progress">En cours de traitement</option>
+          <option value="untreated">Sans traitement</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1">Hôte</label>
+        <select id="synth-host" class="form-select form-select-sm" style="min-width:150px">
+          <option value="">Tous les hôtes</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1">Rechercher</label>
+        <input type="text" id="synth-search" class="form-control form-control-sm" placeholder="Vendor, produit, NVT…" style="min-width:180px"/>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1 invisible d-block">Exploités</label>
+        <label class="form-check form-switch mb-1">
+          <input type="checkbox" id="synth-exploited" class="form-check-input"/>
+          <span class="form-check-label small">Exploités</span>
+        </label>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1 invisible">Reset</label>
+        <button type="button" id="synth-reset" class="btn btn-ghost-secondary btn-sm"><i class="ti ti-rotate me-1"></i>Reset</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Filtres : Résolues -->
+<div id="filters-resolved" class="card mb-3 tab-filters" style="display:none;border-radius:0 0 var(--tblr-border-radius) var(--tblr-border-radius)">
+  <div class="card-body py-2 px-3">
+    <div class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label small mb-1">Rechercher</label>
+        <input type="text" id="resolved-search" class="form-control form-control-sm" placeholder="Nom, hôte, CVE, vendor…" style="min-width:200px"/>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1">Type</label>
+        <select id="resolved-type" class="form-select form-select-sm" style="width:130px">
+          <option value="">Tous</option>
+          <option value="patched">Patché</option>
+          <option value="fp">Faux positif</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1">Sévérité min</label>
+        <input type="number" id="resolved-min-sev" min="0" max="10" step="0.1" class="form-control form-control-sm" style="width:70px" placeholder="0"/>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1">Résolu depuis (j)</label>
+        <input type="number" id="resolved-since" min="0" class="form-control form-control-sm" style="width:100px" placeholder="∞"/>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1">Remédiation min (j)</label>
+        <input type="number" id="resolved-min-days" min="0" class="form-control form-control-sm" style="width:80px" placeholder="0"/>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1">Remédiation max (j)</label>
+        <input type="number" id="resolved-max-days" min="0" class="form-control form-control-sm" style="width:80px"/>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1 invisible d-block">Reset</label>
+        <button type="button" id="resolved-reset" class="btn btn-ghost-secondary btn-sm"><i class="ti ti-rotate me-1"></i>Reset</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════ -->
+<!-- Vue : Synthèse                            -->
+<!-- ══════════════════════════════════════════ -->
+<div id="view-grouped" class="tab-view" style="display:none">
+  {% if groups %}
+  <div class="card" style="overflow:hidden">
+
+    <!-- En-tête colonnes vendor -->
+    <div class="synth-vendor-col-header">
+      <div>Vendor / NVT</div>
+      <div class="synth-vendor-col">Vulns</div>
+      <div class="synth-vendor-col">Products</div>
+      <div class="synth-vendor-col">Sév. max</div>
+      <div class="synth-vendor-col">Score max</div>
+      <div class="synth-vendor-col">Exploités</div>
+      <div></div>
+    </div>
+
+    {% for g in groups %}
+    {% set vendor_idx = loop.index %}
+    <div class="synth-vendor-group" data-vendor="{{ g.vendor }}" data-unclassified="{{ 'true' if g.unclassified else 'false' }}">
+
+      <!-- Ligne vendor cliquable -->
+      <div class="synth-vendor-row" onclick="toggleVendor({{ vendor_idx }})">
+        <div class="d-flex align-items-center gap-2">
+          {% set _v_ip = namespace(count=0) %}
+          {% for _p in g.products %}{% set _v_ip.count = _v_ip.count + (_p.vulns | rejectattr('status', 'equalto', 'active') | list | length) %}{% endfor %}
+          {% if g.unclassified %}
+          <i class="ti ti-question-mark text-secondary" style="font-size:0.85rem"></i>
+          <span class="fw-semibold text-secondary">{{ g.vendor }}</span>
+          {% else %}
+          <i class="ti ti-building text-cyan" style="font-size:0.85rem"></i>
+          <span class="fw-semibold text-cyan">{{ g.vendor }}</span>
+          {% endif %}
+          {% if _v_ip.count %}<span class="badge bg-blue-lt ms-auto" title="Vulnérabilité(s) en cours de traitement"><i class="ti ti-progress me-1"></i>En cours{% if _v_ip.count < g.total_vulns %} {{ _v_ip.count }}/{{ g.total_vulns }}{% endif %}</span>{% endif %}
+        </div>
+        <div class="synth-vendor-col text-secondary synth-vendor-vulns">{{ g.total_vulns }}</div>
+        <div class="synth-vendor-col text-secondary synth-vendor-products">{{ g.products|length }}</div>
+        <div class="synth-vendor-col">
+          {% if g.max_severity >= 9.0 %}<span class="badge badge-critical">{{ "%.1f"|format(g.max_severity) }}</span>
+          {% elif g.max_severity >= 7.0 %}<span class="badge badge-high">{{ "%.1f"|format(g.max_severity) }}</span>
+          {% elif g.max_severity >= 4.0 %}<span class="badge badge-medium">{{ "%.1f"|format(g.max_severity) }}</span>
+          {% elif g.max_severity > 0 %}<span class="badge badge-low">{{ "%.1f"|format(g.max_severity) }}</span>
+          {% else %}<span class="text-secondary">—</span>{% endif %}
+        </div>
+        <div class="synth-vendor-col">
+          {% set vs = namespace(max_score=0) %}
+          {% for p in g.products %}{% if p.max_score > vs.max_score %}{% set vs.max_score = p.max_score %}{% endif %}{% endfor %}
+          <span class="badge {% if vs.max_score >= 70 %}badge-critical{% elif vs.max_score >= 50 %}badge-high{% elif vs.max_score >= 30 %}badge-medium{% else %}badge-low{% endif %}">{{ "%.0f"|format(vs.max_score) }}</span>
+        </div>
+        <div class="synth-vendor-col">
+          {% if g.exploited_count > 0 %}
+          <span class="badge bg-red-lt"><i class="ti ti-alert-triangle me-1"></i>{{ g.exploited_count }}</span>
+          {% else %}<span class="text-secondary">—</span>{% endif %}
+        </div>
+        <div>
+          <button class="synth-toggle-btn" id="toggle-btn-{{ vendor_idx }}" onclick="event.stopPropagation();toggleVendor({{ vendor_idx }})" title="Ouvrir/fermer">
+            <i class="ti ti-chevron-down" style="font-size:0.85rem"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Corps vendor : sous-tableau product triable -->
+      <div class="synth-vendor-body" id="vendor-body-{{ vendor_idx }}">
+        <table class="synth-product-table" id="product-table-{{ vendor_idx }}">
+          <thead>
+            <tr>
+              <th class="sort-asc" data-col="name" data-sort="str">
+                {{ 'NVT' if g.unclassified else 'Product' }}<span class="sort-icon"><i class="ti ti-arrows-sort"></i></span>
+              </th>
+              <th class="col-num" data-col="vulns" data-sort="num">Vulns<span class="sort-icon"><i class="ti ti-arrows-sort"></i></span></th>
+              <th class="col-num" data-col="sev" data-sort="num">Sév. max<span class="sort-icon"><i class="ti ti-arrows-sort"></i></span></th>
+              <th class="col-num" data-col="score" data-sort="num">Score max<span class="sort-icon"><i class="ti ti-arrows-sort"></i></span></th>
+              <th class="col-num" data-col="exploited" data-sort="num">Exploités<span class="sort-icon"><i class="ti ti-arrows-sort"></i></span></th>
+              <th class="col-num" data-col="anssi" data-sort="num">ANSSI<span class="sort-icon"><i class="ti ti-arrows-sort"></i></span></th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+        {% for p in g.products %}
+        {% set product_idx = loop.index %}
+        {% set anssi_count = p.anssi_refs | length %}
+        {# Niveau ANSSI du produit = max des vulns en dessous (namespace car {% set %}
+           dans une boucle Jinja n'échappe pas de la boucle) — garantit la cohérence
+           avec le sous-tableau qui affiche v.anssi_level. #}
+        {% set _anssi = namespace(level='none') %}
+        {% for v in p.vulns %}
+          {% if v.anssi_level == 'alerte' %}{% set _anssi.level = 'alerte' %}
+          {% elif v.anssi_level == 'avis' and _anssi.level != 'alerte' %}{% set _anssi.level = 'avis' %}
+          {% endif %}
+        {% endfor %}
+        {% set anssi_level = _anssi.level %}
+          <!-- Ligne product dans le sous-tableau -->
+          {% set _ip_count = p.vulns | rejectattr('status', 'equalto', 'active') | list | length %}
+          <tr class="synth-product-row synth-product-group"
+              data-vendor="{{ g.vendor }}"
+              data-product="{{ p.product }}"
+              data-max-score="{{ p.max_score|default(0) }}"
+              data-name="{{ p.product | e }}"
+              data-search="{{ (g.vendor ~ ' ' ~ p.product ~ ' ' ~ (p.vulns | map(attribute='name') | select | join(' ')) ~ ' ' ~ (p.all_cves | join(' ')) ~ ' ' ~ (p.vulns | map(attribute='host') | select | join(' ')) ~ ' ' ~ (p.vulns | map(attribute='hostname') | select | join(' '))) | lower }}"
+              data-vulns="{{ p.vulns|length }}"
+              data-inprogress="{{ _ip_count }}"
+              data-sev="{{ p.max_severity }}"
+              data-score="{{ p.max_score|default(0) }}"
+              data-hosts="{{ p.hosts_ports | join(',') }}"
+              data-exploited="{{ p.exploited_count }}"
+              data-anssi="{{ 2 if anssi_level == 'alerte' else (1 if anssi_level == 'avis' else 0) }}"
+              data-anssi-level="{{ anssi_level }}"
+              onclick="toggleProduct({{ vendor_idx }}, {{ product_idx }})">
+            <td class="col-name">
+              <div class="d-flex align-items-center">
+                {% if g.unclassified %}
+                <i class="ti ti-file-description text-secondary me-1" style="font-size:0.8rem"></i>
+                {% else %}
+                <i class="ti ti-package text-secondary me-1" style="font-size:0.8rem"></i>
+                {% endif %}
+                <span class="text-truncate">{{ p.product }}</span>
+                {% if _ip_count %}<span class="badge bg-blue-lt ms-auto" title="Vulnérabilité(s) en cours de traitement"><i class="ti ti-progress me-1"></i>En cours{% if _ip_count < p.vulns|length %} {{ _ip_count }}/{{ p.vulns|length }}{% endif %}</span>{% endif %}
+              </div>
+            </td>
+            <td class="col-num text-secondary">{{ p.vulns|length }}</td>
+            <td class="col-num">
+              {% if p.max_severity >= 9.0 %}<span class="badge badge-critical">{{ "%.1f"|format(p.max_severity) }}</span>
+              {% elif p.max_severity >= 7.0 %}<span class="badge badge-high">{{ "%.1f"|format(p.max_severity) }}</span>
+              {% elif p.max_severity >= 4.0 %}<span class="badge badge-medium">{{ "%.1f"|format(p.max_severity) }}</span>
+              {% elif p.max_severity > 0 %}<span class="badge badge-low">{{ "%.1f"|format(p.max_severity) }}</span>
+              {% else %}<span class="text-secondary">—</span>{% endif %}
+            </td>
+            <td class="col-num">
+              {% set sc = p.max_score|default(0) %}
+              <span class="badge {% if sc >= 70 %}badge-critical{% elif sc >= 50 %}badge-high{% elif sc >= 30 %}badge-medium{% else %}badge-low{% endif %}">{{ "%.0f"|format(sc) }}</span>
+            </td>
+            <td class="col-num">
+              {% if p.exploited_count > 0 %}
+              <span class="badge bg-red-lt"><i class="ti ti-alert-triangle me-1"></i>{{ p.exploited_count }}</span>
+              {% else %}<span class="text-secondary">—</span>{% endif %}
+            </td>
+            <td class="col-num">
+              {% if anssi_level == 'alerte' %}
+              <span class="badge badge-high"><i class="ti ti-building-fortress me-1"></i>Alerte</span>
+              {% elif anssi_level == 'avis' %}
+              <span class="badge badge-medium"><i class="ti ti-building-fortress me-1"></i>Avis</span>
+              {% else %}
+              <span class="badge bg-green-lt"><i class="ti ti-building-fortress me-1"></i>Non</span>
+              {% endif %}
+            </td>
+            <td class="col-actions" onclick="event.stopPropagation()" style="white-space:nowrap;text-align:right;vertical-align:middle">
+              <div class="d-flex align-items-center justify-content-end gap-1">
+              {% set _ip_tickets = p.vulns | selectattr('ticket_number') | map(attribute='ticket_number') | select | list %}
+              <button type="button" class="btn btn-ghost-primary btn-sm treat-btn"
+                      title="Traitement du produit (statut, n° ticket)"
+                      data-vendor="{{ g.vendor }}"
+                      data-product="{{ p.product }}"
+                      data-finding-ids="{{ p.vulns | map(attribute='id') | join(',') }}"
+                      data-ticket="{{ _ip_tickets[0] if _ip_tickets else '' }}"
+                      data-cves="{{ p.all_cves | join(',') }}"
+                      data-hosts="{{ p.hosts_ports | join(',') }}"
+                      data-severity="{{ p.max_severity }}"
+                      data-score="{{ p.max_score | default(0) }}"
+                      data-exploited="{{ p.exploited_count }}"
+                      data-solutions="{{ p.solutions | join('|||') }}"
+                      data-anssi="{{ p.anssi_refs | join(',') }}">
+                <i class="ti ti-clipboard-check me-1"></i>Traitement
+              </button>
+              <button class="synth-toggle-btn" id="product-toggle-{{ vendor_idx }}-{{ product_idx }}"
+                      onclick="toggleProduct({{ vendor_idx }},{{ product_idx }})" title="Ouvrir/fermer">
+                <i class="ti ti-chevron-down" style="font-size:0.8rem"></i>
+              </button>
+              </div>
+            </td>
+          </tr>
+          <!-- Ligne détail vulns (colspan) -->
+          <tr class="synth-product-detail" id="product-body-{{ vendor_idx }}-{{ product_idx }}" style="display:none">
+            <td colspan="7" style="padding:0">
+            <div class="table-responsive">
+              <table class="table table-vcenter table-sm mb-0 synth-inner-table">
+                <thead>
+                  <tr>
+                    <th>Score</th>
+                    <th>Vulnérabilité</th>
+                    <th>Statut</th>
+                    <th>Sévérité</th>
+                    <th>EPSS</th>
+                    <th>ANSSI</th>
+                    <th>Nom d'hôte</th>
+                    <th>IP</th>
+                    <th>Tâche(s)</th>
+                    <th>Détecté le</th>
+                    <th>Port</th>
+                    <th>CVE</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for v in p.vulns %}
+                  <tr class="synth-vuln-row"
+                      data-vuln-id="{{ v.id }}"
+                      data-host="{{ v.host | e }}"
+                      data-hostname="{{ v.hostname | e }}"
+                      data-port="{{ v.port | e }}">
+                    <td>
+                      {% set score = v.ctx_score|default(0) %}
+                      {% set details = v.ctx_score_details|default({}) %}
+                      <span class="badge {% if score >= 70 %}badge-critical{% elif score >= 50 %}badge-high{% elif score >= 30 %}badge-medium{% else %}badge-low{% endif %}"
+                            style="cursor:help"
+                            title="{% for k, val in details.items() %}{{ k }}: {{ "%.2f"|format(val) }}&#10;{% endfor %}">
+                        {{ "%.0f"|format(score) }}
+                      </span>
+                    </td>
+                    <td class="fw-medium text-truncate" style="max-width:220px" title="{{ v.name }}">
+                      {% if v.euvd_exploited %}<i class="ti ti-alert-triangle text-red me-1"></i>{% endif %}
+                      {% if v.match_confidence == 'unknown' %}<span class="badge bg-orange-lt me-1" title="Impact indéterminé — format de version EUVD non interprété, finding conservé par précaution"><i class="ti ti-help-circle me-1"></i>à vérifier</span>{% endif %}
+                      {{ v.name }}
+                    </td>
+                    <td>{{ treat_status(v, status_map, ticket_url) }}</td>
+                    <td>
+                      {% if v.severity >= 9.0 %}<span class="badge badge-critical">{{ "%.1f"|format(v.severity) }}</span>
+                      {% elif v.severity >= 7.0 %}<span class="badge badge-high">{{ "%.1f"|format(v.severity) }}</span>
+                      {% elif v.severity >= 4.0 %}<span class="badge badge-medium">{{ "%.1f"|format(v.severity) }}</span>
+                      {% elif v.severity > 0 %}<span class="badge badge-low">{{ "%.1f"|format(v.severity) }}</span>
+                      {% else %}<span class="badge badge-log">Log</span>{% endif %}
+                    </td>
+                    <td>
+                      {% if v.euvd_epss is not none %}
+                      {% set epss_pct = v.euvd_epss * 100 %}
+                      <span class="badge {% if epss_pct >= 50 %}badge-critical{% elif epss_pct >= 10 %}badge-high{% elif epss_pct >= 1 %}badge-medium{% else %}badge-low{% endif %}">{{ "%.1f"|format(epss_pct) }}%</span>
+                      {% else %}<span class="text-secondary">—</span>{% endif %}
+                    </td>
+                    <td>
+                      {% if v.anssi_level == 'alerte' %}
+                      <span class="badge badge-high"><i class="ti ti-building-fortress me-1"></i>Alerte</span>
+                      {% elif v.anssi_level == 'avis' %}
+                      <span class="badge badge-medium"><i class="ti ti-building-fortress me-1"></i>Avis</span>
+                      {% else %}
+                      <span class="badge bg-green-lt">Non</span>
+                      {% endif %}
+                    </td>
+                    <td>{% if v.hostname %}<code>{{ v.hostname }}</code>{% else %}<span class="text-secondary">—</span>{% endif %}</td>
+                    <td><code class="small text-secondary">{{ v.host }}</code></td>
+                    <td class="small">
+                      {% for tn in v.task_names or [v.task_name or '—'] %}
+                      <span class="badge bg-secondary-lt me-1" title="{{ v.task_ids[loop.index0] if v.task_ids is defined and v.task_ids|length > loop.index0 else '' }}">{{ tn }}</span>
+                      {% endfor %}
+                    </td>
+                    <td class="text-secondary small">{{ v.first_seen[:10] if v.first_seen else '—' }}</td>
+                    <td class="text-secondary">{{ v.port }}{% if v.port_service %} <span class="text-muted small">({{ v.port_service }})</span>{% endif %}</td>
+                    <td>
+                      {% if v.cve and v.cve != '—' %}
+                      {%- set _tip_parts = [] -%}
+                      {%- if v.version_range -%}{%- if _tip_parts.append('Affectées : ' ~ v.version_range) -%}{%- endif -%}{%- endif -%}
+                      {%- if v.monitored_version -%}
+                        {%- set _vlbl = 'Déclarée' if v.family == 'CPE Watch' else 'Détectée' -%}
+                        {%- if _tip_parts.append(_vlbl ~ ' : ' ~ v.monitored_version) -%}{%- endif -%}
+                      {%- endif -%}
+                      {%- set _vtip = _tip_parts | join(' · ') -%}
+                      <a href="{{ v.euvd_url or ('https://euvd.enisa.europa.eu/vulnerability/' ~ v.cve) }}" target="_blank" rel="noopener"
+                         class="badge bg-cyan-lt text-decoration-none"
+                         {% if _vtip %}data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="false" title="{{ _vtip }}"{% endif %}>{{ v.cve }}</a>
+                      {% if v.all_cves|length > 1 %}<span class="badge bg-secondary-lt" title="{{ v.all_cves|join(', ') }}">+{{ v.all_cves|length - 1 }}</span>{% endif %}
+                      {% else %}<span class="text-secondary">—</span>{% endif %}
+                    </td>
+                    <td>
+                      <button class="btn btn-ghost-secondary btn-sm btn-icon vuln-detail-btn" data-vuln-id="{{ v.id }}" title="Détail">
+                        <i class="ti ti-eye"></i>
+                      </button>
+                    </td>
+                    <td class="d-none vuln-solution">{{ v.solution or '' }}</td>
+                    <td class="d-none vuln-published">{{ v.euvd_published or '' }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            </td>
+          </tr>
+        {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="card"><div class="card-body"><div class="empty">
+    <div class="empty-icon"><i class="ti ti-shield-check"></i></div>
+    <p class="empty-title">Aucun résultat</p>
+    <p class="empty-subtitle text-secondary">Vérifiez le cache</p>
+  </div></div></div>
+  {% endif %}
+  <div id="synth-no-results" class="card" style="display:none">
+    <div class="card-body text-center text-secondary py-5">
+      <i class="ti ti-filter-off mb-2" style="font-size:2rem;opacity:.5"></i>
+      <p class="mb-0">Aucun résultat.</p>
+    </div>
+  </div>
+</div>
+
+
+
+<!-- Detail Modal -->
+<button id="modalTrigger" type="button" class="d-none" data-bs-toggle="modal" data-bs-target="#vulnModal"></button>
+<div class="modal modal-blur fade" id="vulnModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="mTitle">—</h5>
+        <span id="mBadge" class="ms-2"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="mBody"></div>
+      <div id="mStatusAction"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ═══ Modale : Traitement (produit — action en masse) ═══════════════════ #}
+<button id="treatModalTrigger" type="button" class="d-none" data-bs-toggle="modal" data-bs-target="#treatModal"></button>
+<div class="modal modal-blur fade" id="treatModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="ti ti-clipboard-check me-2"></i>Traitement — <span id="treatProduct">—</span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-secondary mb-3"><strong id="treatCount">0</strong> vulnérabilité(s) de ce produit — l'action s'applique à toutes.</p>
+        {% if has_perm('vulns.mark_fp') %}
+        <div class="mb-3">
+          <label class="form-label">Statut</label>
+          <select id="treatStatus" class="form-select"></select>
+        </div>
+        <div id="treatFields" class="row g-2 mb-3"></div>
+        <div class="d-flex flex-wrap gap-2">
+          <button type="button" id="treatApply" class="btn btn-primary"><i class="ti ti-check me-1"></i>Appliquer à toutes</button>
+        </div>
+        <hr class="my-3">
+        {% endif %}
+        <button type="button" id="treatCopyTicket" class="btn btn-ghost-primary btn-sm"><i class="ti ti-clipboard-text me-1"></i>Copier le corps du ticket</button>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ═══════════════════════════════════════════════════════════════════════ #}
+{# Vue : Tickets (agrégation des vulns en cours par n° de ticket)          #}
+{# ═══════════════════════════════════════════════════════════════════════ #}
+<div id="view-tickets" class="tab-view" style="display:none">
+  {% if tickets %}
+  <div class="card">
+    <div class="table-responsive">
+      <table class="table table-vcenter card-table" style="font-size:0.8rem">
+        <thead>
+          <tr>
+            <th>Ticket</th>
+            <th class="text-center" style="width:70px">Vulns</th>
+            <th class="text-center" style="width:80px">Produits</th>
+            <th class="text-center" style="width:70px">Hôtes</th>
+            <th class="text-center" style="width:80px">Sév. max</th>
+            <th class="text-center" style="width:80px">Score max</th>
+            <th class="text-center" style="width:80px">Exploités</th>
+            <th style="width:130px">Traité par</th>
+            <th style="width:95px">Depuis</th>
+            <th style="width:150px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in tickets %}
+          <tr class="ticket-row" onclick="toggleTicket({{ loop.index0 }})" style="cursor:pointer">
+            <td>{{ ticket_link(t.ticket, ticket_url) }}</td>
+            <td class="text-center"><span class="badge bg-blue-lt">{{ t.count }}</span></td>
+            <td class="text-center text-secondary">{{ t.product_count }}</td>
+            <td class="text-center text-secondary">{{ t.host_count }}</td>
+            <td class="text-center">{{ sev_badge(t.max_severity) }}</td>
+            <td class="text-center">{{ score_badge(t.max_score) }}</td>
+            <td class="text-center">{% if t.exploited %}<span class="badge bg-red-lt"><i class="ti ti-alert-triangle me-1"></i>{{ t.exploited }}</span>{% else %}<span class="text-secondary">—</span>{% endif %}</td>
+            <td class="text-secondary">{{ t.treated_by or '—' }}</td>
+            <td class="text-secondary small">{{ t.treated_at[:10] if t.treated_at else '—' }}</td>
+            <td onclick="event.stopPropagation()">
+              <div class="d-flex align-items-center justify-content-end gap-1">
+                {% if has_perm('vulns.mark_fp') %}
+                <button type="button" class="btn btn-sm btn-outline-green ticket-close-btn"
+                        data-ticket="{{ t.ticket }}"
+                        data-finding-ids="{{ t.vulns | map(attribute='id') | join(',') }}"
+                        title="Clôturer le ticket — marquer ses {{ t.count }} vulnérabilité(s) comme résolues">
+                  <i class="ti ti-checks me-1"></i>Clôturer
+                </button>
+                {% endif %}
+                <button type="button" class="synth-toggle-btn" id="ticket-toggle-{{ loop.index0 }}" onclick="event.stopPropagation();toggleTicket({{ loop.index0 }})"><i class="ti ti-chevron-right"></i></button>
+              </div>
+            </td>
+          </tr>
+          <tr class="ticket-detail" id="ticket-body-{{ loop.index0 }}" style="display:none">
+            <td colspan="10" style="padding:0;background:var(--tblr-bg-surface-secondary)">
+              <table class="table table-sm table-vcenter mb-0" style="font-size:0.78rem">
+                <thead>
+                  <tr>
+                    <th>Vulnérabilité</th><th>Vendor / Produit</th><th>Hôte</th>
+                    <th class="text-center" style="width:60px">Sév.</th>
+                    <th class="text-center" style="width:60px">Score</th>
+                    <th style="width:120px">CVE</th><th style="width:40px"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for v in t.vulns %}
+                  <tr>
+                    <td class="fw-medium text-truncate" style="max-width:260px" title="{{ v.name }}">{% if v.euvd_exploited %}<i class="ti ti-alert-triangle text-red me-1"></i>{% endif %}{{ v.name }}</td>
+                    <td class="text-truncate" style="max-width:170px">{{ v.euvd_vendor or '—' }}{% if v.euvd_product %} / {{ v.euvd_product }}{% endif %}</td>
+                    <td><code class="small"{% if v.hostname %} title="{{ v.host }}"{% endif %}>{{ v.hostname or v.host }}</code></td>
+                    <td class="text-center">{{ sev_badge(v.severity) }}</td>
+                    <td class="text-center">{{ score_badge(v.ctx_score|default(0)) }}</td>
+                    <td>{% if v.cve and v.cve != '—' %}<a href="{{ v.euvd_url }}" target="_blank" rel="noopener" class="badge bg-cyan-lt text-decoration-none">{{ v.cve }}</a>{% else %}<span class="text-secondary">—</span>{% endif %}</td>
+                    <td class="text-center"><button type="button" class="btn btn-ghost-secondary btn-sm btn-icon vuln-detail-btn" data-vuln-id="{{ v.id }}" title="Détail"><i class="ti ti-eye"></i></button></td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="card">
+    <div class="card-body">
+      <div class="empty">
+        <div class="empty-icon"><i class="ti ti-ticket-off"></i></div>
+        <p class="empty-title">Aucun ticket ouvert</p>
+        <p class="empty-subtitle text-secondary">Les vulnérabilités passées « en cours de traitement » (avec un n° de ticket) apparaîtront ici, regroupées par ticket.</p>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{# ═══════════════════════════════════════════════════════════════════════ #}
+{# Vue : Résolues (chargée en AJAX)                                      #}
+{# ═══════════════════════════════════════════════════════════════════════ #}
+<div id="view-resolved" class="tab-view" style="display:none">
+  <div id="resolved-content">
+    <div class="text-center text-secondary py-5">
+      <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+      Chargement des vulnérabilités résolues...
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script type="application/json" id="gmpilot-vulns-data">{{ filter_options.vendor_products | tojson }}</script>
+<script type="application/json" id="gmpilot-status-defs">{{ status_defs | tojson }}</script>
+<div id="gmpilot-vulns-config"
+     data-vuln-solutions-url="{{ url_for('vulns.detail_json', vuln_id='__ID__') }}"
+     data-resolved-url="{{ url_for('vulns.api_resolved') }}"
+     data-can-mark-fp="{{ 'true' if has_perm('vulns.mark_fp') else 'false' }}"
+     data-ticket-url="{{ ticket_url | e }}"></div>
+<script src="{{ url_for('static', filename='js/vulns.js') }}"></script>
+{% endblock extra_scripts %}

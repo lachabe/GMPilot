@@ -1,0 +1,202 @@
+{# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+{% extends "base.html" %}
+{% block title %}{{ 'Modifier' if status else 'Nouveau' }} statut{% endblock %}
+{% block breadcrumb_content %}Administration — Statuts — {{ status.label if status else 'Nouveau' }}{% endblock %}
+
+{% block content %}
+{% set fixed = status.fixed if status else false %}
+<form method="POST" style="max-width:840px">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+  <input type="hidden" name="fields_json" id="fields_json" value="[]"/>
+
+  <div class="d-flex align-items-center mb-3 gap-2">
+    <h2 class="mb-0">{{ 'Modifier' if status else 'Nouveau' }} statut</h2>
+    <a href="{{ url_for('settings.statuses_index') }}" class="btn btn-ghost-secondary btn-sm ms-auto">Annuler</a>
+    <button type="submit" class="btn btn-primary btn-sm"><i class="ti ti-device-floppy me-1"></i>Enregistrer</button>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header"><h3 class="card-title">Apparence</h3></div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label required">Libellé</label>
+          <input type="text" name="label" id="st-label" class="form-control" value="{{ status.label if status else '' }}" required maxlength="60">
+          {% if status %}<small class="text-secondary">Identifiant : <code>{{ status.id }}</code></small>{% endif %}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Icône (Tabler)</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="ti {{ status.icon if status else 'ti-circle' }}" id="st-icon-preview"></i></span>
+            <input type="text" name="icon" id="st-icon" class="form-control" value="{{ status.icon if status else 'ti-circle' }}" placeholder="ti-flag">
+          </div>
+          <small class="text-secondary">Nom d'icône <a href="https://tabler.io/icons" target="_blank" rel="noopener">tabler.io/icons</a> (ex. ti-shield-check).</small>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Couleur</label>
+          <select name="color" id="st-color" class="form-select">
+            {% for c in colors %}
+            <option value="{{ c }}" {% if (status.color if status else 'secondary') == c %}selected{% endif %}>{{ c }}</option>
+            {% endfor %}
+          </select>
+          <div class="mt-2"><span class="badge bg-secondary-lt" id="st-preview"><i class="ti ti-circle me-1"></i>Aperçu</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header">
+      <h3 class="card-title">Comportement</h3>
+      {% if fixed %}<div class="card-actions"><span class="badge bg-secondary-lt"><i class="ti ti-lock me-1"></i>Verrouillé (statut intégré)</span></div>{% endif %}
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">Visibilité</label>
+          <select name="scope" class="form-select" {% if fixed %}disabled{% endif %}>
+            <option value="open"   {% if (status.scope if status else 'open') == 'open' %}selected{% endif %}>Ouvert — reste dans Synthèse / Brute</option>
+            <option value="closed" {% if status and status.scope == 'closed' %}selected{% endif %}>Fermé — bascule dans Résolues</option>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label d-block">Collant à la réapparition</label>
+          <label class="form-check form-switch">
+            <input type="checkbox" name="sticky" class="form-check-input" {% if status and status.sticky %}checked{% endif %} {% if fixed %}disabled{% endif %}>
+            <span class="form-check-label small">Conserver le statut si le finding réapparaît au scan</span>
+          </label>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label d-block">Auto-résolution</label>
+          <label class="form-check form-switch">
+            <input type="checkbox" name="auto_resolve" class="form-check-input" {% if status and status.auto_resolve %}checked{% endif %} {% if fixed %}disabled{% endif %}>
+            <span class="form-check-label small">Passer en « résolu » s'il disparaît des scans</span>
+          </label>
+        </div>
+      </div>
+      {% if fixed %}<small class="text-secondary d-block mt-2">Les 3 comportements des statuts intégrés sont verrouillés ; seuls libellé, icône, couleur et champs sont modifiables.</small>{% endif %}
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header">
+      <h3 class="card-title">Champs à saisir</h3>
+      <div class="card-actions"><button type="button" class="btn btn-sm btn-outline-primary" id="add-field"><i class="ti ti-plus me-1"></i>Ajouter un champ</button></div>
+    </div>
+    <div class="card-body">
+      <div id="fields-list"></div>
+      <div class="text-secondary small" id="fields-empty">Aucun champ. Les champs sont demandés au moment d'appliquer ce statut à une vulnérabilité.</div>
+    </div>
+  </div>
+</form>
+
+<script type="application/json" id="status-fields-data">{{ (status.fields if status else []) | tojson }}</script>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+  const list = document.getElementById('fields-list');
+  const empty = document.getElementById('fields-empty');
+  const TYPES = [['text','Texte'],['textarea','Texte long'],['date','Date'],['number','Nombre'],['select','Liste'],['user','Utilisateur']];
+
+  function opt(v, l, sel) { return '<option value="' + v + '"' + (sel === v ? ' selected' : '') + '>' + l + '</option>'; }
+
+  function addField(f) {
+    f = f || {};
+    const row = document.createElement('div');
+    row.className = 'field-row row g-2 mb-2 align-items-end';
+    row.innerHTML =
+      '<div class="col-md-3"><label class="form-label small mb-1">Clé</label>' +
+      '<input class="form-control form-control-sm fld-key" value="' + (f.key || '') + '" placeholder="ticket_number"></div>' +
+      '<div class="col-md-3"><label class="form-label small mb-1">Libellé</label>' +
+      '<input class="form-control form-control-sm fld-label" value="' + (f.label || '') + '" placeholder="N° de ticket"></div>' +
+      '<div class="col-md-2"><label class="form-label small mb-1">Type</label>' +
+      '<select class="form-select form-select-sm fld-type">' + TYPES.map(t => opt(t[0], t[1], f.type || 'text')).join('') + '</select></div>' +
+      '<div class="col-md-2 fld-opts-wrap"><label class="form-label small mb-1">Options</label>' +
+      '<input class="form-control form-control-sm fld-opts" value="' + ((f.options || []).join(', ')) + '" placeholder="a, b, c"></div>' +
+      '<div class="col-auto"><label class="form-check form-switch mb-1"><input type="checkbox" class="form-check-input fld-req"' + (f.required ? ' checked' : '') + '><span class="form-check-label small">Obligatoire</span></label></div>' +
+      '<div class="col-auto"><div class="btn-group btn-group-sm" role="group">' +
+      '<button type="button" class="btn btn-ghost-secondary btn-icon fld-up" title="Monter"><i class="ti ti-chevron-up"></i></button>' +
+      '<button type="button" class="btn btn-ghost-secondary btn-icon fld-down" title="Descendre"><i class="ti ti-chevron-down"></i></button>' +
+      '<button type="button" class="btn btn-ghost-danger btn-icon fld-del" title="Supprimer"><i class="ti ti-trash"></i></button>' +
+      '</div></div>';
+    list.appendChild(row);
+    const typeSel = row.querySelector('.fld-type');
+    const optsWrap = row.querySelector('.fld-opts-wrap');
+    const syncOpts = () => { optsWrap.style.display = typeSel.value === 'select' ? '' : 'none'; };
+    typeSel.addEventListener('change', syncOpts); syncOpts();
+    row.querySelector('.fld-del').addEventListener('click', () => { row.remove(); refresh(); });
+    refresh();
+  }
+
+  function refresh() {
+    const rows = list.querySelectorAll('.field-row');
+    empty.style.display = rows.length ? 'none' : '';
+    rows.forEach(function (r, i) {
+      const up = r.querySelector('.fld-up'), dn = r.querySelector('.fld-down');
+      if (up) up.disabled = (i === 0);
+      if (dn) dn.disabled = (i === rows.length - 1);
+    });
+  }
+
+  // Réordonnancement des champs (l'ordre du DOM est sérialisé au submit)
+  list.addEventListener('click', function (e) {
+    const btn = e.target.closest('.fld-up, .fld-down');
+    if (!btn || btn.disabled) return;
+    const row = btn.closest('.field-row');
+    if (btn.classList.contains('fld-up') && row.previousElementSibling) {
+      list.insertBefore(row, row.previousElementSibling);
+    } else if (btn.classList.contains('fld-down') && row.nextElementSibling) {
+      list.insertBefore(row.nextElementSibling, row);
+    }
+    refresh();
+  });
+
+  document.getElementById('add-field').addEventListener('click', () => addField({}));
+
+  // Aperçu du badge (icône + couleur + libellé)
+  const iconEl = document.getElementById('st-icon');
+  const colorEl = document.getElementById('st-color');
+  const labelEl = document.getElementById('st-label');
+  const preview = document.getElementById('st-preview');
+  const iconPrev = document.getElementById('st-icon-preview');
+  function updatePreview() {
+    const icon = (iconEl.value || 'ti-circle').trim();
+    preview.className = 'badge bg-' + colorEl.value + '-lt';
+    preview.innerHTML = '<i class="ti ' + icon + ' me-1"></i>' + (labelEl.value || 'Aperçu');
+    iconPrev.className = 'ti ' + icon;
+  }
+  [iconEl, colorEl, labelEl].forEach(el => el.addEventListener('input', updatePreview));
+  colorEl.addEventListener('change', updatePreview);
+
+  // Sérialisation à la soumission
+  document.querySelector('form').addEventListener('submit', () => {
+    const fields = [];
+    list.querySelectorAll('.field-row').forEach(row => {
+      const key = row.querySelector('.fld-key').value.trim();
+      if (!key) return;
+      const type = row.querySelector('.fld-type').value;
+      const f = {
+        key: key,
+        label: row.querySelector('.fld-label').value.trim() || key,
+        type: type,
+        required: row.querySelector('.fld-req').checked,
+      };
+      if (type === 'select') {
+        f.options = row.querySelector('.fld-opts').value.split(',').map(s => s.trim()).filter(Boolean);
+      }
+      fields.push(f);
+    });
+    document.getElementById('fields_json').value = JSON.stringify(fields);
+  });
+
+  // Init
+  try {
+    const data = JSON.parse(document.getElementById('status-fields-data').textContent || '[]');
+    (data || []).forEach(addField);
+  } catch (e) {}
+  refresh(); updatePreview();
+})();
+</script>
+{% endblock %}

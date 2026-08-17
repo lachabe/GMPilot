@@ -1,0 +1,21 @@
+{# nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+{% extends "base.html" %}
+{% block title %}Nouvelle planification{% endblock %}
+{% block breadcrumb_content %}Nouvelle planification{% endblock %}
+{% block page_actions %}<a href="{{ url_for('schedules.index') }}" class="btn btn-ghost-secondary btn-sm"><i class="ti ti-arrow-left me-1"></i>Retour</a>{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-lg-8 col-xl-6">
+  <div class="card"><div class="card-header"><h3 class="card-title"><i class="ti ti-calendar-clock me-2"></i>Planification iCalendar</h3></div>
+    <div class="card-body">
+      <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+        <div class="mb-3"><label class="form-label required">Nom</label><input type="text" name="name" class="form-control" required placeholder="Ex: Scan hebdomadaire"/></div>
+        <div class="mb-3"><label class="form-label">Fuseau horaire</label><input type="text" name="timezone" value="UTC" class="form-control" placeholder="Europe/Paris"/><small class="form-hint">Format TZ IANA</small></div>
+        <div class="mb-3"><label class="form-label required">iCalendar (RRULE)</label><textarea name="icalendar" rows="6" class="form-control" required placeholder="BEGIN:VCALENDAR&#10;VERSION:2.0&#10;BEGIN:VEVENT&#10;DTSTART:20240101T060000Z&#10;RRULE:FREQ=WEEKLY;BYDAY=MO&#10;END:VEVENT&#10;END:VCALENDAR"></textarea></div>
+        <div class="mb-3"><label class="form-label">Commentaire</label><textarea name="comment" class="form-control" rows="2"></textarea></div>
+        <div class="d-flex gap-2"><button type="submit" class="btn btn-primary"><i class="ti ti-plus me-1"></i>Créer</button><a href="{{ url_for('schedules.index') }}" class="btn btn-ghost-secondary">Annuler</a></div>
+      </form>
+    </div>
+  </div>
+</div></div>
+{% endblock %}

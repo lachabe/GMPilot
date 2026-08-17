@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Paramètres — {{ APP_NAME }}{% endblock %}
+{% block breadcrumb_content %}Paramètres généraux{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <form method="POST" action="{{ url_for('settings.general') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+
+      {# ── Authentification ─────────────────────────────────────────── #}
+      <div class="card mb-3">
+        <div class="card-header">
+          <h3 class="card-title"><i class="ti ti-shield-lock me-2"></i>Authentification</h3>
+        </div>
+        <div class="card-body">
+          <label class="form-check form-switch">
+            <input type="checkbox" class="form-check-input" name="deny_if_no_role"
+                   {% if settings.deny_if_no_role %}checked{% endif %}>
+            <span class="form-check-label">Refuser l'accès si aucun rôle ne correspond</span>
+          </label>
+          <small class="text-secondary d-block mt-1">Si activé, les utilisateurs LDAP/OIDC sans rôle matché ne peuvent pas se connecter.</small>
+        </div>
+      </div>
+
+      {# ── Seuils de remédiation ────────────────────────────────────── #}
+      <div class="card mb-3">
+        <div class="card-header">
+          <h3 class="card-title"><i class="ti ti-clock me-2"></i>Seuils de remédiation</h3>
+        </div>
+        <div class="card-body">
+          <p class="text-secondary small mb-3">Codes couleur du temps de remédiation dans l'onglet Résolues.</p>
+          <div class="row g-3">
+            <div class="col-sm-6">
+              <label class="form-label"><span class="badge bg-yellow-lt me-1">Attention</span> à partir de (jours)</label>
+              <input type="number" class="form-control" name="remediation_warn_days"
+                     value="{{ settings.remediation_warn_days }}" min="1" max="365">
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label"><span class="badge bg-red-lt me-1">Critique</span> à partir de (jours)</label>
+              <input type="number" class="form-control" name="remediation_critical_days"
+                     value="{{ settings.remediation_critical_days }}" min="1" max="3650">
+            </div>
+          </div>
+          <div class="mt-2 p-2 rounded" style="background:var(--tblr-bg-surface-secondary)">
+            <small class="text-secondary">Aperçu : </small>
+            <span class="badge bg-green-lt">0 – {{ settings.remediation_warn_days }}j</span>
+            <span class="badge bg-yellow-lt">{{ settings.remediation_warn_days }} – {{ settings.remediation_critical_days }}j</span>
+            <span class="badge bg-red-lt">> {{ settings.remediation_critical_days }}j</span>
+          </div>
+        </div>
+      </div>
+
+      {# ── Ticketing ────────────────────────────────────────────────── #}
+      <div class="card mb-3">
+        <div class="card-header">
+          <h3 class="card-title"><i class="ti ti-ticket me-2"></i>Ticketing</h3>
+        </div>
+        <div class="card-body">
+          <label class="form-label">URL de ticket</label>
+          <input type="text" class="form-control" name="ticket_url"
+                 value="{{ settings.ticket_url }}" placeholder="https://ticket.exemple.com/?id=&lt;id&gt;">
+          <small class="text-secondary d-block mt-1">
+            Utilisez <code>&lt;id&gt;</code> comme emplacement du numéro de ticket. Si défini, les numéros de
+            ticket des vulnérabilités « en cours de traitement » deviennent des liens cliquables. Laissez vide pour un affichage simple.
+          </small>
+        </div>
+      </div>
+
+      {# ── Synchronisation automatique ──────────────────────────────── #}
+      <div class="card mb-3">
+        <div class="card-header">
+          <h3 class="card-title"><i class="ti ti-refresh me-2"></i>Synchronisation automatique</h3>
+        </div>
+        <div class="card-body">
+          <label class="form-check form-switch mb-3">
+            <input type="checkbox" class="form-check-input" name="scheduler_enabled"
+                   {% if settings.scheduler_enabled %}checked{% endif %}>
+            <span class="form-check-label">Activer la synchronisation automatique</span>
+          </label>
+          <small class="text-secondary d-block mb-3">Nécessite un compte de service GMP configuré (GMP_SERVICE_ACCOUNT) pour les données GVM.</small>
+
+          <div class="table-responsive">
+            <table class="table table-sm table-vcenter" style="font-size:0.85rem">
+              <thead>
+                <tr>
+                  <th>Donnée</th>
+                  <th style="width:140px">Intervalle</th>
+                  <th style="width:80px">Unité</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for key, defaults in schedule_defs.items() %}
+                {% set sched = settings.schedules.get(key, {}) if settings.schedules else {} %}
+                {% set hours = sched.get("interval_hours", defaults.interval_hours) %}
+                <tr>
+                  <td>
+                    {{ defaults.label }}
+                    {% if defaults.get("after_vulns") %}
+                    <span class="badge bg-secondary-lt ms-1">après vulns</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if defaults.get("after_vulns") %}
+                    <span class="text-secondary">Auto</span>
+                    <input type="hidden" name="sched_{{ key }}" value="0">
+                    {% else %}
+                    <input type="number" class="form-control form-control-sm" name="sched_{{ key }}"
+                           value="{{ hours }}" min="0" max="8760">
+                    {% endif %}
+                  </td>
+                  <td class="text-secondary">
+                    {% if not defaults.get("after_vulns") %}
+                    {% if hours == 0 %}désactivé{% elif hours < 24 %}h{% elif hours < 168 %}h ({{ (hours / 24)|round(1) }}j){% else %}h ({{ (hours / 168)|round(1) }}sem){% endif %}
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <small class="text-secondary">0 = désactivé. Les tâches GVM nécessitent le compte de service.</small>
+        </div>
+      </div>
+
+      {# ── Submit ───────────────────────────────────────────────────── #}
+      {% if has_perm("settings.general_edit") %}
+      <div class="d-flex justify-content-end">
+        <button type="submit" class="btn btn-primary">
+          <i class="ti ti-device-floppy me-1"></i>Sauvegarder
+        </button>
+      </div>
+      {% endif %}
+    </form>
+  </div>
+</div>
+{% endblock %}

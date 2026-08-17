@@ -1,0 +1,463 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — {{ APP_NAME }}{% endblock %}
+{% block breadcrumb_content %}Dashboard{% endblock %}
+
+{% block content %}
+
+{# ── Onglets ──────────────────────────────────────────────────────────── #}
+<div class="mb-0" style="border:1px solid var(--tblr-border-color);border-bottom:none;border-radius:var(--tblr-border-radius) var(--tblr-border-radius) 0 0;background:var(--tblr-bg-surface);padding:0 0.5rem">
+  <div style="display:flex;gap:0">
+    <a id="tab-etat" href="#" data-tab="etat"
+       style="display:inline-flex;align-items:center;padding:.55rem .75rem;font-size:.8rem;font-weight:500;border-bottom:2px solid transparent;color:var(--tblr-secondary);text-decoration:none;transition:color .15s,border-color .15s">
+      <i class="ti ti-chart-pie me-1"></i><span id="tab-etat-label">État actuel</span>
+    </a>
+    <a id="tab-tendances" href="#" data-tab="tendances"
+       style="display:inline-flex;align-items:center;padding:.55rem .75rem;font-size:.8rem;font-weight:500;border-bottom:2px solid transparent;color:var(--tblr-secondary);text-decoration:none;transition:color .15s,border-color .15s">
+      <i class="ti ti-trending-up me-1"></i>Tendances
+    </a>
+  </div>
+</div>
+
+{# ═══ Vue : État ═══════════════════════════════════════════════════════ #}
+<div id="view-etat" class="dash-view">
+
+{# ── Sélecteur de date ─────────────────────────────────────────────────── #}
+<div class="card mb-3" style="border-radius:0 0 var(--tblr-border-radius) var(--tblr-border-radius)">
+  <div class="card-body py-2 px-3">
+    <div class="row g-2 align-items-center">
+      <div class="col-auto">
+        <small class="text-secondary">Remonter dans le temps :</small>
+      </div>
+      <div class="col">
+        <input type="range" id="date-slider" class="form-range"
+               min="0" max="100" value="100" style="min-width:200px">
+      </div>
+      <div class="col-auto">
+        <input type="date" id="date-picker" class="form-control form-control-sm" style="width:150px"
+               value="{{ date_max }}" min="{{ date_min }}" max="{{ date_max }}">
+      </div>
+      <div class="col-auto">
+        <button type="button" id="date-reset" class="btn btn-ghost-secondary btn-sm">
+          <i class="ti ti-rotate me-1"></i>Aujourd'hui
+        </button>
+      </div>
+      <div class="col-auto">
+        <span id="date-display" class="badge bg-cyan-lt"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── KPI cards ────────────────────────────────────────────────────────── #}
+<div class="row row-deck row-cards mb-3" id="kpi-cards">
+  {% macro kpi_card(id, icon, icon_style, label, value) %}
+  <div class="col-6 col-sm-4 col-lg">
+    <div class="card card-sm">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <span class="{{ icon_style }} avatar avatar-sm me-3"><i class="ti ti-{{ icon }}"></i></span>
+          <div>
+            <div class="text-secondary small">{{ label }}</div>
+            <div class="h1 mb-0" data-kpi="{{ id }}">{{ value }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endmacro %}
+  {{ kpi_card("total", "bug", "bg-danger-lt text-danger", "Vulnérabilités", total_vulns) }}
+  {{ kpi_card("critical", "alert-triangle", "avatar avatar-sm me-3\" style=\"background:rgba(158,27,27,.15);color:#9e1b1b", "Critiques", critical_count) }}
+  {{ kpi_card("exploited", "flame", "bg-orange-lt text-orange", "Exploitées (KEV)", exploited_count) }}
+  {{ kpi_card("avg_score", "chart-bar", "bg-cyan-lt text-cyan", "Score moyen", avg_score) }}
+  {{ kpi_card("hosts", "server", "bg-azure-lt text-azure", "Hôtes scannés", hosts_count) }}
+  {{ kpi_card("anssi", "building-fortress", "bg-purple-lt text-purple", "Alertes ANSSI", anssi_alertes) }}
+  {{ kpi_card("scans", "radar-2", "bg-green-lt text-green", "Scans actifs", active_scans) }}
+</div>
+
+{# ── Charts row 1 : Sévérité + Top hôtes ─────────────────────────────── #}
+<div class="row row-deck row-cards mb-3">
+  <div class="col-lg-4">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">Répartition par sévérité</h3></div>
+      <div class="card-body d-flex align-items-center justify-content-center" style="min-height:280px">
+        <canvas id="chartSeverity" style="max-height:260px"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">Top 10 hôtes les plus exposés</h3></div>
+      <div class="card-body" style="min-height:280px">
+        <canvas id="chartHosts" style="max-height:260px"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Charts row 2 : Top produits + Top vulns ─────────────────────────── #}
+<div class="row row-deck row-cards mb-3">
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">Top 10 produits vulnérables</h3></div>
+      <div class="card-body" style="min-height:320px">
+        <canvas id="chartProducts" style="max-height:300px"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Top vulnérabilités (par score)</h3>
+        <div class="card-actions">
+          <a href="{{ url_for('vulns.index', sort='score', order='desc') }}" class="btn btn-ghost-secondary btn-sm">Voir tout <i class="ti ti-arrow-right ms-1"></i></a>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-vcenter card-table table-sm">
+          <thead>
+            <tr><th>Vulnérabilité</th><th class="text-center" style="width:70px">Score</th><th class="text-center" style="width:70px">CVSS</th><th style="width:120px">Hôte</th><th style="width:70px">Port</th><th style="width:100px">CVE</th></tr>
+          </thead>
+          <tbody id="top-vulns-body">
+            {% for v in top_vulns %}
+            <tr>
+              <td class="text-truncate" style="max-width:260px" title="{{ v.name }}">{{ v.name }}{% if v.euvd_exploited %}<i class="ti ti-flame text-orange ms-1" title="Exploitée"></i>{% endif %}</td>
+              <td class="text-center">{% set sc = v.ctx_score|default(0) %}<span class="badge {% if sc >= 75 %}badge-critical{% elif sc >= 50 %}badge-high{% elif sc >= 25 %}badge-medium{% else %}badge-low{% endif %}">{{ sc }}</span></td>
+              <td class="text-center"><span class="badge badge-{{ v.sev_class }}">{{ "%.1f"|format(v.severity) }}</span></td>
+              <td><code class="small">{{ v.host }}</code></td>
+              <td class="text-secondary small">{{ v.port }}</td>
+              <td>{% if v.cve and v.cve != '—' %}<a href="{{ v.euvd_url }}" target="_blank" rel="noopener" class="badge bg-cyan-lt text-decoration-none">{{ v.cve }}</a>{% else %}<span class="text-secondary">—</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+            {% if not top_vulns %}<tr><td colspan="6" class="text-center text-secondary py-4">Aucune donnée</td></tr>{% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+{# ═══ Vue : Tendances ══════════════════════════════════════════════════ #}
+<div id="view-tendances" class="dash-view" style="display:none">
+
+<div class="card mb-3" style="border-radius:0 0 var(--tblr-border-radius) var(--tblr-border-radius)">
+  <div class="card-body py-2 px-3">
+    <div class="row g-2 align-items-center">
+      <div class="col-auto"><small class="text-secondary">Période :</small></div>
+      <div class="col-auto">
+        <input type="date" id="trend-from" class="form-control form-control-sm" style="width:150px" value="{{ date_min }}">
+      </div>
+      <div class="col-auto"><small class="text-secondary">→</small></div>
+      <div class="col-auto">
+        <input type="date" id="trend-to" class="form-control form-control-sm" style="width:150px" value="{{ date_today }}">
+      </div>
+      <div class="col-auto">
+        <button type="button" id="trend-load" class="btn btn-cyan btn-sm"><i class="ti ti-refresh me-1"></i>Charger</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row row-deck row-cards mb-3">
+  <div class="col-lg-12">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">Évolution des vulnérabilités actives</h3></div>
+      <div class="card-body" style="min-height:300px">
+        <canvas id="chartActiveTrend"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row row-deck row-cards mb-3">
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">Répartition par sévérité dans le temps</h3></div>
+      <div class="card-body" style="min-height:300px">
+        <canvas id="chartSeverityTrend"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">Remédiation mensuelle</h3></div>
+      <div class="card-body" style="min-height:300px">
+        <canvas id="chartRemediation"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/vendor/chart.umd-4.4.1.min.js"></script>
+<script>
+(function() {
+  const COLORS = { critical:'#9e1b1b', high:'#d63939', medium:'#f76707', low:'#fab005' };
+  const isDark = () => document.documentElement.getAttribute('data-bs-theme') === 'dark';
+  const gridColor = () => isDark() ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.08)';
+  const textColor = () => isDark() ? '#a0aec0' : '#667382';
+
+  const API_URL = '{{ url_for("dashboard.api_stats") }}';
+  const TIMELINE_URL = '{{ url_for("dashboard.api_timeline") }}';
+  const DATE_MIN = '{{ date_min }}';
+  const DATE_MAX = '{{ date_max }}';
+
+  // ── Onglets ──────────────────────────────────────────────────────────
+  function activateTab(name) {
+    ['etat','tendances'].forEach(t => {
+      const a = document.getElementById('tab-' + t);
+      if (!a) return;
+      a.style.color = t === name ? 'var(--tblr-primary)' : 'var(--tblr-secondary)';
+      a.style.borderBottomColor = t === name ? 'var(--tblr-primary)' : 'transparent';
+    });
+    document.querySelectorAll('.dash-view').forEach(el =>
+      el.style.display = el.id === 'view-' + name ? '' : 'none');
+    localStorage.setItem('dash_tab', name);
+    if (name === 'tendances' && !trendLoaded) loadTrends();
+  }
+  document.querySelectorAll('[data-tab]').forEach(a =>
+    a.addEventListener('click', e => { e.preventDefault(); activateTab(a.dataset.tab); }));
+
+  // ── Charts État (initiaux) ───────────────────────────────────────────
+  let chartSeverity, chartHosts, chartProducts;
+
+  function initCharts(data) {
+    Chart.defaults.color = textColor();
+    Chart.defaults.borderColor = gridColor();
+
+    if (chartSeverity) chartSeverity.destroy();
+    const sevCtx = document.getElementById('chartSeverity');
+    if (sevCtx) {
+      chartSeverity = new Chart(sevCtx, {
+        type: 'doughnut',
+        data: {
+          labels: ['Critique','Haute','Moyenne','Faible'],
+          datasets: [{ data: [data.severity_dist.critical, data.severity_dist.high, data.severity_dist.medium, data.severity_dist.low],
+                       backgroundColor: [COLORS.critical, COLORS.high, COLORS.medium, COLORS.low], borderWidth:0, hoverOffset:6 }]
+        },
+        options: { responsive:true, maintainAspectRatio:false, cutout:'60%',
+                   plugins:{ legend:{ position:'bottom', labels:{ padding:16, usePointStyle:true, pointStyle:'circle', font:{size:11} } } } }
+      });
+    }
+
+    if (chartHosts) chartHosts.destroy();
+    const hostsCtx = document.getElementById('chartHosts');
+    if (hostsCtx && data.top_hosts.length) {
+      const ips = data.top_hosts.map(h => h.host || h[0]);
+      const hd = data.top_hosts.map(h => h.critical !== undefined ? h : h[1]);
+      const labels = hd.map((m, i) => (m && m.hostname) ? m.hostname : ips[i]);
+      chartHosts = new Chart(hostsCtx, {
+        type: 'bar',
+        data: { labels,
+          datasets: [
+            { label:'Critique', data:hd.map(h=>h.critical), backgroundColor:COLORS.critical },
+            { label:'Haute',    data:hd.map(h=>h.high),     backgroundColor:COLORS.high },
+            { label:'Moyenne',  data:hd.map(h=>h.medium),   backgroundColor:COLORS.medium },
+            { label:'Faible',   data:hd.map(h=>h.low),      backgroundColor:COLORS.low },
+          ] },
+        options: { responsive:true, maintainAspectRatio:false, indexAxis:'y',
+                   scales:{ x:{stacked:true, grid:{color:gridColor()}, ticks:{color:textColor()}}, y:{stacked:true, grid:{display:false}, ticks:{color:textColor(), font:{size:11}}} },
+                   plugins:{ legend:{ position:'top', labels:{usePointStyle:true, pointStyle:'circle', padding:12, font:{size:11}} },
+                             tooltip:{ callbacks:{ afterTitle:(items)=>{ const i=items[0].dataIndex; return labels[i] !== ips[i] ? ('IP : ' + ips[i]) : ''; } } } } }
+      });
+    }
+
+    if (chartProducts) chartProducts.destroy();
+    const prodCtx = document.getElementById('chartProducts');
+    if (prodCtx && data.top_products.length) {
+      const pl = data.top_products.map(p => { const l = p.label || p[0]; return l.length > 28 ? l.slice(0,26)+'…' : l; });
+      const pd = data.top_products.map(p => p.count !== undefined ? p : p[1]);
+      chartProducts = new Chart(prodCtx, {
+        type: 'bar',
+        data: { labels: pl,
+          datasets: [{ label:'Vulnérabilités', data:pd.map(p=>p.count),
+                        backgroundColor:pd.map(p=> p.max_sev>=9?COLORS.critical : p.max_sev>=7?COLORS.high : p.max_sev>=4?COLORS.medium : COLORS.low),
+                        borderRadius:3 }] },
+        options: { responsive:true, maintainAspectRatio:false, indexAxis:'y',
+                   scales:{ x:{grid:{color:gridColor()}, ticks:{color:textColor()}}, y:{grid:{display:false}, ticks:{color:textColor(), font:{size:11}}} },
+                   plugins:{ legend:{display:false} } }
+      });
+    }
+  }
+
+  // ── Date picker + slider ─────────────────────────────────────────────
+  const slider = document.getElementById('date-slider');
+  const picker = document.getElementById('date-picker');
+  const resetBtn = document.getElementById('date-reset');
+  const tabLabel = document.getElementById('tab-etat-label');
+  const dateDisplay = document.getElementById('date-display');
+
+  function dateFromSlider(val) {
+    if (!DATE_MIN || !DATE_MAX) return null;
+    const d0 = new Date(DATE_MIN), d1 = new Date(DATE_MAX);
+    const ms = d0.getTime() + (d1.getTime() - d0.getTime()) * (val / 100);
+    return new Date(ms).toISOString().slice(0,10);
+  }
+
+  function sliderFromDate(dateStr) {
+    if (!DATE_MIN || !DATE_MAX) return 100;
+    const d0 = new Date(DATE_MIN).getTime(), d1 = new Date(DATE_MAX).getTime();
+    const d = new Date(dateStr).getTime();
+    return Math.round((d - d0) / (d1 - d0) * 100);
+  }
+
+  function formatDateFr(dateStr) {
+    if (!dateStr) return '';
+    const [y,m,d] = dateStr.split('-');
+    return d + '/' + m + '/' + y;
+  }
+
+  let currentDate = null;
+  let fetchTimeout = null;
+
+  function setDate(dateStr, fromSlider) {
+    const today = new Date().toISOString().slice(0,10);
+    const isToday = !dateStr || dateStr >= today;
+
+    currentDate = isToday ? null : dateStr;
+    tabLabel.textContent = isToday ? 'État actuel' : 'État au ' + formatDateFr(dateStr);
+    dateDisplay.textContent = isToday ? '' : formatDateFr(dateStr);
+
+    if (!fromSlider && slider) slider.value = isToday ? 100 : sliderFromDate(dateStr);
+    if (picker) picker.value = isToday ? DATE_MAX : dateStr;
+
+    clearTimeout(fetchTimeout);
+    fetchTimeout = setTimeout(() => fetchStats(currentDate), 200);
+  }
+
+  if (slider) slider.addEventListener('input', () => setDate(dateFromSlider(slider.value), true));
+  if (picker) picker.addEventListener('change', () => setDate(picker.value, false));
+  if (resetBtn) resetBtn.addEventListener('click', () => setDate(null, false));
+
+  function fetchStats(atDate) {
+    const url = atDate ? API_URL + '?date=' + atDate : API_URL;
+    fetch(url, { headers:{'X-Requested-With':'XMLHttpRequest'} })
+      .then(r => r.json())
+      .then(data => {
+        // KPIs
+        const kpis = {total:data.total_vulns, critical:data.critical_count, exploited:data.exploited_count,
+                      avg_score:data.avg_score, hosts:data.hosts_count, anssi:data.anssi_alertes, scans:data.active_scans};
+        Object.entries(kpis).forEach(([k,v]) => {
+          const el = document.querySelector('[data-kpi="'+k+'"]');
+          if (el) el.textContent = v;
+        });
+        // Charts
+        initCharts(data);
+        // Top vulns table
+        const tbody = document.getElementById('top-vulns-body');
+        if (tbody && data.top_vulns) {
+          tbody.innerHTML = data.top_vulns.map(v => {
+            const sc = v.ctx_score||0;
+            const scCls = sc>=75?'badge-critical':sc>=50?'badge-high':sc>=25?'badge-medium':'badge-low';
+            const cveHtml = v.cve && v.cve!=='—' ? '<a href="'+v.euvd_url+'" target="_blank" class="badge bg-cyan-lt text-decoration-none">'+v.cve+'</a>' : '<span class="text-secondary">—</span>';
+            return '<tr><td class="text-truncate" style="max-width:260px">'+v.name+(v.euvd_exploited?'<i class="ti ti-flame text-orange ms-1"></i>':'')+'</td>'
+              +'<td class="text-center"><span class="badge '+scCls+'">'+sc+'</span></td>'
+              +'<td class="text-center"><span class="badge badge-'+v.sev_class+'">'+v.severity.toFixed(1)+'</span></td>'
+              +'<td><code class="small">'+v.host+'</code></td>'
+              +'<td class="text-secondary small">'+v.port+'</td>'
+              +'<td>'+cveHtml+'</td></tr>';
+          }).join('') || '<tr><td colspan="6" class="text-center text-secondary py-4">Aucune donnée</td></tr>';
+        }
+      });
+  }
+
+  // Init charts with server-rendered data
+  initCharts({
+    severity_dist: {{ severity_dist|tojson }},
+    top_hosts: {{ top_hosts|tojson }},
+    top_products: {{ top_products|tojson }},
+  });
+
+  // ── Tendances ────────────────────────────────────────────────────────
+  let trendLoaded = false;
+  let chartActive, chartSevTrend, chartRemed;
+
+  function loadTrends() {
+    const from = document.getElementById('trend-from').value;
+    const to = document.getElementById('trend-to').value;
+    fetch(TIMELINE_URL + '?from=' + from + '&to=' + to, {headers:{'X-Requested-With':'XMLHttpRequest'}})
+      .then(r => r.json())
+      .then(data => {
+        trendLoaded = true;
+
+        // Active findings over time
+        if (chartActive) chartActive.destroy();
+        const ctx1 = document.getElementById('chartActiveTrend');
+        if (ctx1) {
+          chartActive = new Chart(ctx1, {
+            type: 'line',
+            data: {
+              labels: data.active_series.map(p => p.date),
+              datasets: [{ label:'Findings actifs', data:data.active_series.map(p=>p.count),
+                            borderColor:'#0ea5e9', backgroundColor:'rgba(14,165,233,.1)', fill:true, tension:.3, pointRadius:2 }]
+            },
+            options: { responsive:true, maintainAspectRatio:false,
+                       scales:{ x:{grid:{color:gridColor()}, ticks:{color:textColor(), maxTicksLimit:12}}, y:{grid:{color:gridColor()}, ticks:{color:textColor()}} },
+                       plugins:{ legend:{display:false} } }
+          });
+        }
+
+        // Severity stacked area
+        if (chartSevTrend) chartSevTrend.destroy();
+        const ctx2 = document.getElementById('chartSeverityTrend');
+        if (ctx2) {
+          chartSevTrend = new Chart(ctx2, {
+            type: 'line',
+            data: {
+              labels: data.severity_series.map(p => p.date),
+              datasets: [
+                { label:'Critique', data:data.severity_series.map(p=>p.critical), borderColor:COLORS.critical, backgroundColor:'rgba(158,27,27,.15)', fill:true, tension:.3, pointRadius:0 },
+                { label:'Haute',    data:data.severity_series.map(p=>p.high),     borderColor:COLORS.high,     backgroundColor:'rgba(214,57,57,.15)', fill:true, tension:.3, pointRadius:0 },
+                { label:'Moyenne',  data:data.severity_series.map(p=>p.medium),   borderColor:COLORS.medium,   backgroundColor:'rgba(247,103,7,.15)', fill:true, tension:.3, pointRadius:0 },
+                { label:'Faible',   data:data.severity_series.map(p=>p.low),      borderColor:COLORS.low,      backgroundColor:'rgba(250,176,5,.15)', fill:true, tension:.3, pointRadius:0 },
+              ]
+            },
+            options: { responsive:true, maintainAspectRatio:false,
+                       scales:{ x:{stacked:true, grid:{color:gridColor()}, ticks:{color:textColor(), maxTicksLimit:12}}, y:{stacked:true, grid:{color:gridColor()}, ticks:{color:textColor()}} },
+                       plugins:{ legend:{ position:'top', labels:{usePointStyle:true, pointStyle:'circle', padding:10, font:{size:11}} } } }
+          });
+        }
+
+        // Remediation monthly
+        if (chartRemed) chartRemed.destroy();
+        const ctx3 = document.getElementById('chartRemediation');
+        if (ctx3 && data.remediation.length) {
+          chartRemed = new Chart(ctx3, {
+            type: 'bar',
+            data: {
+              labels: data.remediation.map(r => r.month),
+              datasets: [
+                { label:'Résolues', data:data.remediation.map(r=>r.count), backgroundColor:'rgba(47,179,68,.6)', borderRadius:3, yAxisID:'y' },
+                { label:'Durée médiane (j)', data:data.remediation.map(r=>r.median_days), type:'line', borderColor:'#0ea5e9', pointRadius:4, tension:.3, yAxisID:'y1' },
+              ]
+            },
+            options: { responsive:true, maintainAspectRatio:false,
+                       scales:{ x:{grid:{color:gridColor()}, ticks:{color:textColor()}},
+                                y:{position:'left', grid:{color:gridColor()}, ticks:{color:textColor()}, title:{display:true, text:'Résolues', color:textColor()}},
+                                y1:{position:'right', grid:{display:false}, ticks:{color:textColor()}, title:{display:true, text:'Jours', color:textColor()}} },
+                       plugins:{ legend:{ position:'top', labels:{usePointStyle:true, pointStyle:'circle', padding:10, font:{size:11}} } } }
+          });
+        }
+      });
+  }
+
+  document.getElementById('trend-load').addEventListener('click', () => { trendLoaded = false; loadTrends(); });
+
+  // ── Theme toggle sync ──────────────────────────────────────────────
+  const toggle = document.getElementById('themeToggle');
+  if (toggle) toggle.addEventListener('click', () => setTimeout(() => {
+    Chart.defaults.color = textColor();
+    Chart.defaults.borderColor = gridColor();
+    Object.values(Chart.instances).forEach(c => c.update());
+  }, 50));
+
+  // ── Init ──────────────────────────────────────────────────────────
+  activateTab(localStorage.getItem('dash_tab') || 'etat');
+})();
+</script>
+{% endblock %}
