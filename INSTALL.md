@@ -33,6 +33,20 @@ pip install defusedxml          # Recommandé (sécurité XML)
 
 ## 4. Configuration
 
+### Option A — Assistant interactif (recommandé)
+
+```bash
+python configure.py
+```
+
+L'assistant pose quelques questions (connexion GVM, backend d'authentification,
+paramètres applicatifs), puis génère `.env`, `config/app_settings.json` (et
+`config/roles/role-admin.json` en LDAP/OIDC) et initialise la base SQLite. Il ne
+remplace aucun fichier existant sans confirmation. Voir les détails ci-dessous
+pour ajuster manuellement.
+
+### Option B — Manuelle
+
 Copier le fichier d'exemple et l'adapter :
 
 ```bash
