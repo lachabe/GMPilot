@@ -1552,225 +1552,197 @@ def _clean_version_qualifiers(s: str) -> str:
     return re.sub(r'\s{2,}', ' ', out).strip()
 
 
-def _version_in_range_raw(version: str, range_str: str) -> str:
-    """Détermine l'état d'affectation de `version` par le range EUVD `range_str`.
+from packaging.version import Version, InvalidVersion
 
-    Retourne l'une des trois constantes :
-      MATCH_AFFECTED      version prouvée dans la plage vulnérable
-      MATCH_NOT_AFFECTED  version prouvée hors de la plage
-      MATCH_UNKNOWN       format non interprété / donnée manquante → doute
 
-    Le doute (UNKNOWN) est conservateur : l'appelant crée quand même le finding
-    (pas de faux négatif) mais peut signaler la faible confiance à l'utilisateur.
-
-    Formats couverts (analyse sur 11 310 entrées EUVD réelles) :
-      RANGE_<          "0 <26.2.47"           deux tokens espace-délimités
-      EXACT            "4.1.0"                version exacte
-      RANGE_≤          "9.0 ≤9.0.5400.0"      idem avec ≤ (Unicode)
-      UPPER_BOUND_ONLY "< 0.3.2"              borne haute seule
-      COMMA/ENUM       ">= 10.0.0, < 11.0.0"  bornes OU énumération de séries
-      "prior to X" / "X and earlier" / "all X.x before Y" / "Éditeur X.Y.Z"
-    """
-    from packaging.version import Version, InvalidVersion
-
-    if not version:
-        return MATCH_UNKNOWN  # pas de version déclarée → indéterminé
-
-    range_str = (range_str or "").strip()
-    if not range_str or range_str in ("-", "—"):
-        return MATCH_UNKNOWN  # NULL_FIELD / NO_VERSION → indéterminé
-
+def _vir_parse(s: str):
+    """Version(s) ou None si non parseable."""
     try:
-        v = Version(version)
+        return Version(s.strip())
     except InvalidVersion:
-        return MATCH_UNKNOWN  # version non parseable → indéterminé
+        return None
 
-    # Normaliser les opérateurs Unicode (≤ ≥) — le mojibake PowerShell est évité
-    # en amont par notre décodage explicite UTF-8 de la réponse HTTP.
-    range_str = range_str.replace("≤", "<=").replace("≥", ">=")
 
-    # Retirer les parenthèses de bruit : "GIMP 2.10.34 (revision 2)" → "GIMP 2.10.34"
-    if "(" in range_str:
-        range_str = _VIR_PAREN_RE.sub("", range_str).strip()
-        range_str = re.sub(r"\s{2,}", " ", range_str)
+def _vir_state(r) -> str:
+    """bool/None d'une contrainte → état ; None (non parseable) → UNKNOWN."""
+    if r is True:
+        return MATCH_AFFECTED
+    if r is False:
+        return MATCH_NOT_AFFECTED
+    return MATCH_UNKNOWN
 
-    def _parse_v(s: str):
-        try:
-            return Version(s.strip())
-        except InvalidVersion:
-            return None
 
-    def _check_op(op: str, bound_str: str):
-        """Évalue v OP bound → bool, ou None si bound non parseable."""
-        b = _parse_v(bound_str)
-        if b is None:
-            return None
-        return {"<": v < b, "<=": v <= b, ">=": v >= b, ">": v > b, "=": v == b}.get(op)
+def _vir_check(v, op: str, bound_str: str):
+    """Évalue v OP bound → bool, ou None si bound non parseable."""
+    b = _vir_parse(bound_str)
+    if b is None:
+        return None
+    return {"<": v < b, "<=": v <= b, ">=": v >= b, ">": v > b, "=": v == b}.get(op)
 
-    def _state(r) -> str:
-        """bool/None d'une contrainte → état ; None (non parseable) → UNKNOWN."""
-        if r is True:
-            return MATCH_AFFECTED
-        if r is False:
-            return MATCH_NOT_AFFECTED
+
+def _vir_norm_low(s: str) -> str:
+    """Normalise la borne basse de 'LOW <HIGH' (unspecified/branche wildcard/préfixe v)."""
+    if s.lower() == "unspecified":
+        return "0"
+    m = _VIR_LOW_BRANCH_RE.match(s)
+    if m:
+        return m.group(1) + ".0"
+    if len(s) > 1 and s[0] in ("v", "V") and s[1].isdigit():
+        return s[1:]
+    return s
+
+
+def _vir_match_comma(v, range_str: str) -> str:
+    """Format virgule : bornes ET explicites (>= X, < Y) et/ou énumération de séries."""
+    enum: list[str] = []
+    any_definite = False
+    for part in (p.strip() for p in range_str.split(",") if p.strip()):
+        cons = _VIR_EMBEDDED_OP_RE.findall(part)
+        if cons:
+            for op, ver in cons:
+                r = _vir_check(v, op, ver)
+                if r is False:
+                    return MATCH_NOT_AFFECTED  # une borne exclut définitivement v
+                if r is True:
+                    any_definite = True
+            part = _VIR_EMBEDDED_OP_RE.sub("", part)
+        enum.extend(_VIR_BARE_VER_RE.findall(part))
+    if enum:
+        for e in enum:
+            ev = _vir_parse(e)
+            if ev is None:
+                continue
+            if v == ev or (v.major == ev.major and v.minor == ev.minor):
+                return MATCH_AFFECTED  # v appartient à une série énumérée affectée
+        return MATCH_NOT_AFFECTED
+    return MATCH_AFFECTED if any_definite else MATCH_UNKNOWN
+
+
+def _vir_match_two(v, toks):
+    """Format 2 tokens 'LOW <HIGH' (+ wildcard, before/below, 'Éditeur X.Y.Z' exact).
+    Retourne un état, ou None si le format ne s'applique pas (fall-through)."""
+    low_str, high_tok = toks
+    m = _VIR_HIGH_TOK_RE.match(high_tok)
+    if m:
+        high_op, high_val_str = m.group(1), m.group(2)
+        has_wildcard = high_val_str.endswith(".*")
+        if has_wildcard:
+            high_val_str = high_val_str[:-2]
+        low_v = _vir_parse(_vir_norm_low(low_str))
+        high_v = _vir_parse(high_val_str)
+        if low_v is not None and high_v is not None:
+            if low_v == high_v:
+                if has_wildcard:
+                    # "10.6 <10.6.*" : toute la série X.Y est affectée → bumpe au minor suivant.
+                    bumped = Version(f"{high_v.major}.{high_v.minor + 1}.0")
+                    return MATCH_AFFECTED if (v >= low_v and v < bumped) else MATCH_NOT_AFFECTED
+                # "186 <186" (borne basse répétée, encoding Chrome) → borne haute seule.
+                return _vir_state(_vir_check(v, high_op, high_val_str))
+            if v < low_v:
+                return MATCH_NOT_AFFECTED
+            return _vir_state(_vir_check(v, high_op, high_val_str))
+        if low_v is not None:
+            return MATCH_NOT_AFFECTED if v < low_v else MATCH_UNKNOWN
         return MATCH_UNKNOWN
+    # high_tok sans opérateur préfixe
+    if low_str.lower() in ("before", "below", "prior"):
+        return _vir_state(_vir_check(v, "<", high_tok))
+    if _vir_parse(low_str) is None and _vir_parse(high_tok) is not None:
+        # "NomÉditeur 2.10.34" → version EXACTE affectée.
+        return MATCH_AFFECTED if v == _vir_parse(high_tok) else MATCH_NOT_AFFECTED
+    return None
 
-    # ── Format virgule / énumération ─────────────────────────────────────────
-    # Deux sémantiques cohabitent dans EUVD :
-    #   - bornes explicites : ">= 10.0.0, < 11.0.0"        → contraintes ET
-    #   - énumération        : "affects 2.7, 3.5, 3.6, 3.7" → v doit matcher une série
-    # (souvent mixte : "affects 2.7, 3.5, …, v3.8.0a4 and < v3.8.0b1")
-    if "," in range_str:
-        enum: list[str] = []  # versions énumérées = séries affectées
-        any_definite = False  # au moins une borne explicite satisfaite
-        for part in (p.strip() for p in range_str.split(",") if p.strip()):
-            cons = _VIR_EMBEDDED_OP_RE.findall(part)
-            if cons:
-                for op, ver in cons:
-                    r = _check_op(op, ver)
-                    if r is False:
-                        return MATCH_NOT_AFFECTED  # une borne exclut définitivement v
-                    if r is True:
-                        any_definite = True
-                part = _VIR_EMBEDDED_OP_RE.sub("", part)  # retirer les bornes traitées
-            enum.extend(_VIR_BARE_VER_RE.findall(part))
-        if enum:
-            for e in enum:
-                ev = _parse_v(e)
-                if ev is None:
-                    continue
-                if v == ev or (v.major == ev.major and v.minor == ev.minor):
-                    return MATCH_AFFECTED  # v appartient à une série énumérée affectée
-            return MATCH_NOT_AFFECTED  # v ne matche aucune version énumérée
-        return MATCH_AFFECTED if any_definite else MATCH_UNKNOWN
 
-    # ── Format espace-délimité deux tokens : "LOW <HIGH" / "LOW <=HIGH" ─────
-    # Représente 68,5 % des entrées EUVD : "0 <26.2.47", "9.0 <=9.0.5400.0"
-    # Variante avec wildcard (ex. MariaDB) : "10.6 <10.6.*", "11.1 <11.4.*"
-    toks = range_str.split()
+def _vir_match_three(v, toks):
+    """Formats 3 tokens : 'prior to X', 'X and earlier/newer', 'X before Y', 'X - Y'.
+    Retourne un état, ou None si non applicable."""
+    lo, op_word, hi = toks
+    op_word_l, lo_l, hi_l = op_word.lower(), lo.lower(), hi.lower()
+    if lo_l == "prior" and op_word_l == "to":
+        return _vir_state(_vir_check(v, "<", hi))
+    if op_word_l == "and":
+        if hi_l in ("earlier", "older", "below", "before", "prior", "lower"):
+            return _vir_state(_vir_check(v, "<=", lo))
+        if hi_l in ("newer", "later", "above", "higher", "greater"):
+            return _vir_state(_vir_check(v, ">=", lo))
+    if op_word_l in ("before", "below", "prior"):
+        low_v = _vir_parse(_vir_norm_low(lo))
+        high_v = _vir_parse(hi)
+        if low_v is not None and high_v is not None:
+            if v < low_v:
+                return MATCH_NOT_AFFECTED
+            return MATCH_AFFECTED if v < high_v else MATCH_NOT_AFFECTED
+        return MATCH_UNKNOWN
+    if op_word == "-":
+        low_v = _vir_parse(lo)
+        high_v = _vir_parse(hi)
+        if low_v is not None and high_v is not None:
+            return MATCH_AFFECTED if low_v <= v <= high_v else MATCH_NOT_AFFECTED
+        return MATCH_UNKNOWN
+    return None
 
-    def _norm_low(s: str) -> str:
-        """Normalise la borne basse du format 'LOW <HIGH'.
-        Cas rencontrés dans EUVD :
-          "unspecified"  → "0"          (pas de borne inférieure)
-          "8.2.*"        → "8.2.0"      (branche wildcard PHP/EUVD)
-          "7.3.x"        → "7.3.0"      (idem lettre minuscule)
-          "8.0.X"        → "8.0.0"      (idem lettre majuscule)
-          "v1.2.3"       → "1.2.3"      (préfixe v)
-        """
-        if s.lower() == "unspecified":
-            return "0"
-        m = _VIR_LOW_BRANCH_RE.match(s)
-        if m:
-            return m.group(1) + ".0"
-        if len(s) > 1 and s[0] in ('v', 'V') and s[1].isdigit():
-            return s[1:]
-        return s
 
-    if len(toks) == 2:
-        low_str, high_tok = toks
-        m = _VIR_HIGH_TOK_RE.match(high_tok)
-        if m:
-            high_op, high_val_str = m.group(1), m.group(2)
-
-            # Wildcard EUVD : "X.Y.*" → deux sémantiques selon le contexte
-            # (ex. MariaDB CVE-2023-52970 : "11.1 <11.4.*", "10.6 <10.6.*")
-            has_wildcard = high_val_str.endswith(".*")
-            if has_wildcard:
-                high_val_str = high_val_str[:-2]  # strip ".*"
-
-            low_v  = _parse_v(_norm_low(low_str))
-            high_v = _parse_v(high_val_str)
-            if low_v is not None and high_v is not None:
-                if low_v == high_v:
-                    if has_wildcard:
-                        # "10.6 <10.6.*" : branche entière affectée sans correctif
-                        # dans cette série → tout X.Y.z (z quelconque) est affecté.
-                        # On bumpe la borne haute au minor suivant.
-                        bumped = Version(f"{high_v.major}.{high_v.minor + 1}.0")
-                        return MATCH_AFFECTED if (v >= low_v and v < bumped) else MATCH_NOT_AFFECTED
-                    # "186 <186" sans wildcard : encoding Chrome (borne basse répétée)
-                    # → interpréter comme borne haute seule.
-                    return _state(_check_op(high_op, high_val_str))
-                # Cas normal : v >= low_v  ET  v OP high_v
-                # "11.1 <11.4.*" (has_wildcard, low != high) : "< 11.4.0" = version
-                # corrigée dans la branche 11.4 → les branches 11.1–11.3 sont affectées.
-                if v < low_v:
-                    return MATCH_NOT_AFFECTED
-                return _state(_check_op(high_op, high_val_str))
-            # HIGH non parseable ("unspecified", date textuelle…) :
-            # v < borne basse connue → non affecté ; sinon plafond inconnu → doute.
-            if low_v is not None:
-                return MATCH_NOT_AFFECTED if v < low_v else MATCH_UNKNOWN
-            return MATCH_UNKNOWN
-
-        # m is None : high_tok n'a pas d'opérateur préfixe
-        # "before X" / "below X" → équivalent à "< X"
-        if low_str.lower() in ("before", "below", "prior"):
-            return _state(_check_op("<", high_tok))
-        # "NomÉditeur 2.10.34" (parenthèses déjà retirées) : 1er token non
-        # numérique + 2e token = version → version EXACTE affectée.
-        # (ex. GIMP CVE-2023-44442 : "GIMP 2.10.34" ⇒ seule 2.10.34 concernée)
-        if _parse_v(low_str) is None and _parse_v(high_tok) is not None:
-            return MATCH_AFFECTED if v == _parse_v(high_tok) else MATCH_NOT_AFFECTED
-
-    # ── Trois tokens ─────────────────────────────────────────────────────────
-    # "prior to X"                              → < X
-    # "X and earlier/older/below"               → <= X
-    # "X and newer/later/above"                 → >= X
-    # "X.Y.z before Z.W"  / "X.Y.x below Z.W"   → >= X.Y.0 AND < Z.W
-    # "X.Y - Z.W"                               → >= X.Y AND <= Z.W
-    if len(toks) == 3:
-        lo, op_word, hi = toks
-        op_word_l, lo_l, hi_l = op_word.lower(), lo.lower(), hi.lower()
-        # "prior to 2.17.1187" → < 2.17.1187
-        if lo_l == "prior" and op_word_l == "to":
-            return _state(_check_op("<", hi))
-        # "3.0 and earlier" → <= 3.0 ; "2.3.12 and newer" → >= 2.3.12
-        if op_word_l == "and":
-            if hi_l in ("earlier", "older", "below", "before", "prior", "lower"):
-                return _state(_check_op("<=", lo))
-            if hi_l in ("newer", "later", "above", "higher", "greater"):
-                return _state(_check_op(">=", lo))
-        if op_word_l in ("before", "below", "prior"):
-            low_v  = _parse_v(_norm_low(lo))
-            high_v = _parse_v(hi)
-            if low_v is not None and high_v is not None:
-                if v < low_v:
-                    return MATCH_NOT_AFFECTED
-                return MATCH_AFFECTED if v < high_v else MATCH_NOT_AFFECTED
-            return MATCH_UNKNOWN
-        if op_word == "-":
-            low_v  = _parse_v(lo)
-            high_v = _parse_v(hi)
-            if low_v is not None and high_v is not None:
-                return MATCH_AFFECTED if low_v <= v <= high_v else MATCH_NOT_AFFECTED
-            return MATCH_UNKNOWN
-
-    # ── Quatre tokens : "all X.x before Y" / "all X.Y.x before Z" ────────────
-    # Ex. PostgreSQL "all 10.x before 10.10" : seule la série 10.x (< 10.10)
-    # est concernée — une version d'une autre branche majeure (18.4) ne l'est pas.
-    if len(toks) == 4 and toks[0].lower() == "all" and toks[2].lower() in ("before", "below", "prior"):
+def _vir_match_four(v, toks):
+    """Format 4 tokens 'all X.x before Y' — seule la série X.x est concernée.
+    Retourne un état, ou None si non applicable."""
+    if toks[0].lower() == "all" and toks[2].lower() in ("before", "below", "prior"):
         mb = _VIR_LOW_BRANCH_RE.match(toks[1])
-        high_v = _parse_v(toks[3])
+        high_v = _vir_parse(toks[3])
         if mb and high_v is not None:
             if not _in_series(v, mb.group(1)):
                 return MATCH_NOT_AFFECTED
             return MATCH_AFFECTED if v < high_v else MATCH_NOT_AFFECTED
         return MATCH_UNKNOWN
+    return None
 
-    # ── Contrainte unique avec opérateur : "< 0.3.2", ">=10.0.0" ───────────
+
+def _version_in_range_raw(version: str, range_str: str) -> str:
+    """Détermine l'état d'affectation de `version` par le range EUVD `range_str`.
+
+    Retourne MATCH_AFFECTED / MATCH_NOT_AFFECTED / MATCH_UNKNOWN. Le doute (UNKNOWN)
+    est conservateur : l'appelant crée quand même le finding (pas de faux négatif)
+    mais peut signaler la faible confiance. Dispatcher sur le format de range ;
+    chaque format est traité par un handler _vir_match_* (cf. les tests de
+    caractérisation tests/test_version_range.py). Formats couverts : exact,
+    "LOW <HIGH", virgule (bornes/énumération), "prior to X", "X and earlier/newer",
+    "X before Y", "X - Y", "all X.x before Y", contrainte simple "< X".
+    """
+    if not version:
+        return MATCH_UNKNOWN  # pas de version déclarée → indéterminé
+    range_str = (range_str or "").strip()
+    if not range_str or range_str in ("-", "—"):
+        return MATCH_UNKNOWN  # NULL_FIELD / NO_VERSION → indéterminé
+    v = _vir_parse(version)
+    if v is None:
+        return MATCH_UNKNOWN  # version non parseable → indéterminé
+
+    # Normaliser les opérateurs Unicode (≤ ≥) et retirer les parenthèses de bruit.
+    range_str = range_str.replace("≤", "<=").replace("≥", ">=")
+    if "(" in range_str:
+        range_str = _VIR_PAREN_RE.sub("", range_str).strip()
+        range_str = re.sub(r"\s{2,}", " ", range_str)
+
+    if "," in range_str:
+        return _vir_match_comma(v, range_str)
+
+    toks = range_str.split()
+    handler = {2: _vir_match_two, 3: _vir_match_three, 4: _vir_match_four}.get(len(toks))
+    if handler:
+        r = handler(v, toks)
+        if r is not None:
+            return r
+
+    # Contrainte unique avec opérateur : "< 0.3.2", ">=10.0.0"
     m = _VIR_CONSTRAINT_RE.match(range_str)
     if m:
-        return _state(_check_op(m.group(1), m.group(2)))
+        return _vir_state(_vir_check(v, m.group(1), m.group(2)))
 
-    # ── Version exacte : "4.1.0" ────────────────────────────────────────────
-    b = _parse_v(range_str)
+    # Version exacte : "4.1.0"
+    b = _vir_parse(range_str)
     if b is not None:
         return MATCH_AFFECTED if v == b else MATCH_NOT_AFFECTED
 
-    # ── Format non reconnu (RPM epoch, git hash, labels vendeur…) → indéterminé
-    return MATCH_UNKNOWN
+    return MATCH_UNKNOWN  # format non reconnu → indéterminé
 
 
 def _version_in_range(version: str, range_str: str) -> str:
