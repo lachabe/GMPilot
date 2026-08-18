@@ -75,4 +75,4 @@ for asset in ASSETS:
 # résolvent correctement car le CSS et le dossier fonts/ sont sous /static/vendor/.
 # Aucun patch nécessaire.
 
-print(f"\n✅ Terminé. Relancez l'application avec : python run.py")
+print("\n✅ Terminé. Relancez l'application avec : python run.py")

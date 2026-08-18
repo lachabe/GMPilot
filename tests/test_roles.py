@@ -1,7 +1,6 @@
 """Tests de app.auth.roles : sécurité des chemins, CRUD rôles, résolution de
 permissions, et app_settings. Les chemins fichiers sont isolés en tmp.
 """
-import json
 import types
 
 import pytest

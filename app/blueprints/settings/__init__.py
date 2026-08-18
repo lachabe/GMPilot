@@ -2,13 +2,13 @@
 Settings blueprint — Configuration du scoring.
 """
 import json
-import copy
 import logging
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from flask_login import login_required, current_user
 from app.auth.permissions import require_perm
 
 settings_bp = Blueprint("settings", __name__, url_prefix="/settings")
+logger = logging.getLogger(__name__)
 
 
 def _load_config() -> dict:
@@ -464,7 +464,6 @@ def scoring_preview():
         # Calcul avec la config temporaire
         from app.scoring import _get_criterion_value, _safe_eval
         from app.db import get_db
-        import json as _json
 
         db = get_db()
         kev_data = {r["cve_id"]: {"dateAdded": r["kev_date_added"]}

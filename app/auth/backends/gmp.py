@@ -30,7 +30,7 @@ class GmpAuthBackend(AuthBackend):
         """
         try:
             # Test de connexion GMP
-            with gmp_session(username, password) as gmp:
+            with gmp_session(username, password):
                 logger.info(f"GMP authentication successful for user: {username}")
                 return User(
                     username=username,

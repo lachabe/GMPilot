@@ -1,0 +1,23 @@
+# Configuration ruff — gate qualité (cf. .github/workflows/ci.yml).
+#
+# On impose les règles de CORRECTION qui attrapent de vrais bugs :
+#   E9  — erreurs de syntaxe
+#   F   — pyflakes (imports/variables morts, noms non définis…)
+#   B   — flake8-bugbear (anti-patterns réels)
+#
+# Les règles de STYLE que ce codebase ne suit volontairement pas ne sont PAS
+# imposées : imports différés dans les fonctions (E402), gardes sur une ligne
+# `if x: return` (E701), etc.
+#
+# La complexité (C901) est un chantier connu (plusieurs fonctions >12) : laissée
+# informative ici — l'ajouter à `select` l'imposerait une fois les fonctions
+# découpées.
+
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = ["E9", "F", "B"]
+
+[lint.mccabe]
+max-complexity = 12

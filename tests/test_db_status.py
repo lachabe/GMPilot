@@ -5,7 +5,6 @@ Cœur de la feature « partage de valeur entre statuts » : status_data est fusi
 """
 import json
 
-import pytest
 
 from app.db import (
     set_findings_status,

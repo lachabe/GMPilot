@@ -6,12 +6,10 @@ import os
 import re
 import json
 import logging
-import xml.etree.ElementTree as ET
 from datetime import datetime
-from typing import Any, Callable
+from typing import Callable
 
 import yaml
-from flask import current_app
 
 logger = logging.getLogger(__name__)
 

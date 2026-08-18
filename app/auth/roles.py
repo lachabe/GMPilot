@@ -60,7 +60,7 @@ def save_role(role: dict) -> bool:
             json.dump(role, f, ensure_ascii=False, indent=2)
         return True
     except Exception as e:
-        logger.error(f"[ROLES] Erreur sauvegarde {role_id}: {e}")
+        logger.error(f"[ROLES] Erreur sauvegarde {role.get('id')}: {e}")
         return False
 
 

@@ -2,7 +2,6 @@ from app.auth.permissions import require_perm
 """Vulnérabilités — lecture depuis SQLite, enrichi EUVD + scoring."""
 from flask import Blueprint, render_template, request, jsonify
 from flask_login import login_required
-from app.gvm_client import severity_class
 
 vulns_bp = Blueprint("vulns", __name__, url_prefix="/vulns")
 PER_PAGE = 50
@@ -29,14 +28,12 @@ def _extract_filter_options(results: list) -> dict:
       Pour "Non classifié", les "products" sont les noms NVT distincts.
     """
     vendor_products: dict = {}
-    has_unclassified = False
 
     for r in results:
         vendor = _norm_vendor(r.get("euvd_vendor") or "")
         product = _norm_product(r.get("euvd_product") or "")
 
         if vendor == "—":
-            has_unclassified = True
             nvt_name = r.get("nvt_name") or r.get("name") or "—"
             vendor_products.setdefault("Non classifié", set()).add(nvt_name)
         else:

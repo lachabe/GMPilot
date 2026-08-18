@@ -4,7 +4,7 @@ LDAP authentication backend using ldap3.
 import logging
 from typing import Optional, Tuple
 from flask import current_app
-from ldap3 import Server, Connection, ALL, SIMPLE, Tls
+from ldap3 import Server, Connection, ALL, Tls
 from ldap3.core.exceptions import LDAPException, LDAPBindError
 import ssl
 from .base import AuthBackend, User
@@ -114,7 +114,7 @@ class LdapAuthBackend(AuthBackend):
             with Connection(server, user=user_dn, password=password, auto_bind=True) as user_conn:
                 logger.info(f"LDAP authentication successful for user: {username}")
                 # Re-chercher memberOf avec le bind utilisateur (accès à ses propres attributs)
-                from ldap3 import BASE, ALL_ATTRIBUTES
+                from ldap3 import BASE
                 user_conn.search(
                     search_base=user_dn,
                     search_filter="(objectClass=*)",

@@ -186,7 +186,7 @@ def main():
         vendors = conn.execute("SELECT COUNT(DISTINCT vendor) FROM cpe_dictionary").fetchone()[0]
         products = conn.execute("SELECT COUNT(DISTINCT vendor || '/' || product) FROM cpe_dictionary").fetchone()[0]
 
-        logger.info(f"\nRésumé:")
+        logger.info("\nRésumé:")
         logger.info(f"  Total: {inserted} entrées CPE")
         logger.info(f"  Vendors: {vendors}")
         logger.info(f"  Products: {products}")

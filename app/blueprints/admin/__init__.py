@@ -1,7 +1,6 @@
 """
 Admin blueprint — Gestion des rôles et permissions.
 """
-import uuid
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from flask_login import login_required
 from app.auth.permissions import require_perm, PERMISSIONS, permissions_by_section

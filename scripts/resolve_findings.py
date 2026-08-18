@@ -55,7 +55,7 @@ def main():
         after = conn.execute("SELECT COUNT(*) FROM findings WHERE status='active'").fetchone()[0]
         resolved_total = conn.execute("SELECT COUNT(*) FROM findings WHERE status='resolved'").fetchone()[0]
 
-        logger.info(f"\nRésultat:")
+        logger.info("\nRésultat:")
         logger.info(f"  Résolues cette passe: {total_resolved}")
         logger.info(f"  Findings actifs:      {before} → {after}")
         logger.info(f"  Findings résolus:     {resolved_total}")

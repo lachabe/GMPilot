@@ -1,7 +1,6 @@
 """Tests des helpers/parseurs purs de app.gvm_client (XML GMP → dict/list)."""
 import xml.etree.ElementTree as ET
 
-import pytest
 
 from app.gvm_client import (
     _text, _attr, _safe_float, _parse_tags_str,

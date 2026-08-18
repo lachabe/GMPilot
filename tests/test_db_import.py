@@ -8,7 +8,6 @@ Logique la plus sensible du cycle de scan :
 """
 import xml.etree.ElementTree as ET
 
-import pytest
 
 from app.db import import_gmp_results, resolve_stale_findings
 

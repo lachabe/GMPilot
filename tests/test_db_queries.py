@@ -2,7 +2,6 @@
 
 Couvre : query_active/resolved (+ _row_to_vuln), marquage FP, cache GMP, cache DNS.
 """
-import pytest
 
 from app.db import (
     query_active_findings, query_resolved_findings,

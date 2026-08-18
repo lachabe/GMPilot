@@ -26,7 +26,7 @@ except Exception:
     _ET_parse = ET.parse
 from flask import Blueprint, render_template, redirect, url_for, flash, current_app, request
 from flask_login import login_required, current_user
-from app.gvm_client import (gmp_session, gmp_get_hosts, gmp_get_vulns)
+from app.gvm_client import (gmp_session, gmp_get_hosts)
 
 cache_bp = Blueprint("cache", __name__, url_prefix="/sync")
 logger = logging.getLogger(__name__)
@@ -2744,7 +2744,7 @@ def _task_refresh_dns(full: bool = False):
         socket.setdefaulttimeout(2.0)  # borne les lookups sans PTR (best-effort)
         try:
             with ThreadPoolExecutor(max_workers=32) as ex:
-                for i, (ip, host) in enumerate(zip(targets, ex.map(_reverse_dns, targets))):
+                for i, (ip, host) in enumerate(zip(targets, ex.map(_reverse_dns, targets), strict=True)):
                     results.append((ip, host))
                     if host:
                         resolved += 1

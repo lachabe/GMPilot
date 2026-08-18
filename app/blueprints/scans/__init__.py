@@ -3,7 +3,7 @@ from app.auth.permissions import require_perm
 import logging
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from flask_login import login_required, current_user
-from app.gvm_client import gmp_session, gmp_session_for_user
+from app.gvm_client import gmp_session_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +132,7 @@ def status(task_id):
             task = xml.find("task")
             if task is None:
                 return jsonify({"error": "not found"}), 404
-            from app.gvm_client import _text, _safe_float
+            from app.gvm_client import _safe_float
             lr = task.find("last_report/report")
             return jsonify({
                 "status":         task.findtext("status") or "Unknown",
@@ -152,7 +152,7 @@ def status_all():
     """Retourne les statuts de toutes les tâches en un seul appel GMP."""
     try:
         with gmp_session_for_user(current_user) as gmp:
-            from app.gvm_client import _text, _safe_float, parse_tasks
+            from app.gvm_client import parse_tasks
             xml = gmp.get_tasks(filter_string="rows=-1 details=1")
             tasks = parse_tasks(xml)
             result = {}

@@ -192,7 +192,7 @@ def main():
             resolved_count = conn.execute("SELECT COUNT(*) FROM findings WHERE status='resolved'").fetchone()[0]
             sightings = conn.execute("SELECT COUNT(*) FROM sightings").fetchone()[0]
             imports = conn.execute("SELECT COUNT(*) FROM scan_imports").fetchone()[0]
-            logger.info(f"\nRésumé:")
+            logger.info("\nRésumé:")
             logger.info(f"  Rapports importés: {imports}")
             logger.info(f"  Sightings totaux:  {sightings}")
             logger.info(f"  Findings totaux:   {total} ({active} actifs, {resolved_count} résolus)")
