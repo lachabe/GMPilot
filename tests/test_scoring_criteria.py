@@ -95,3 +95,31 @@ class TestCriterionHostTag:
 def test_source_inconnue_renvoie_defaut():
     crit = {"source": "bidon", "values": [{"default": 0.9}]}
     assert _get_criterion_value(crit, {}, [], {}, {}) == 0.9
+
+
+# ── Cas limites (renforcement avant refactor) ─────────────────────────────────
+class TestCriterionEdge:
+    def test_epss_threshold(self):
+        crit = {"source": "epss", "normalize": "threshold",
+                "values": [{"threshold": 0.5, "value": 1.0}, {"default": 0.1}]}
+        assert _get_criterion_value(crit, {"euvd_epss": 0.6}, [], {}, {}) == 1.0
+        assert _get_criterion_value(crit, {"euvd_epss": 0.3}, [], {}, {}) == 0.1
+
+    def test_severity_sans_normalize_defaut_scale(self):
+        crit = {"source": "severity"}  # pas de normalize → scale_0_1
+        assert _get_criterion_value(crit, {"severity": 8.0}, [], {}, {}) == 0.8
+
+    def test_kev_sans_entree_match_renvoie_defaut(self):
+        # values sans entrée match:True → même en KEV, on retombe sur le défaut.
+        crit = {"source": "kev", "values": [{"default": 0.4}]}
+        assert _get_criterion_value(crit, {"all_cves": ["CVE-A"]}, [], {"CVE-A": {}}, {}) == 0.4
+
+    def test_kev_fallback_cve_simple(self):
+        # pas d'all_cves → repli sur le champ 'cve'
+        crit = {"source": "kev", "values": [{"match": True, "value": 1.0}, {"match": False, "value": 0.0}]}
+        assert _get_criterion_value(crit, {"cve": "CVE-A"}, [], {"CVE-A": {}}, {}) == 1.0
+        assert _get_criterion_value(crit, {"cve": "—"}, [], {"CVE-A": {}}, {}) == 0.0
+
+    def test_host_tag_sans_tag_name_defaut(self):
+        crit = {"source": "host_tag", "values": [{"default": 0.2}]}  # pas de tag_name
+        assert _get_criterion_value(crit, {}, ["exposed"], {}, {}) == 0.2

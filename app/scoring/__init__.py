@@ -362,136 +362,130 @@ def generate_formula_from_criteria(criteria: list) -> str:
 # Calcul du score
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _crit_default(values) -> float:
+    """Valeur par défaut déclarée dans les `values` d'un critère (0.0 sinon)."""
+    for v in values:
+        if "default" in v:
+            return v.get("default", 0.0)
+    return 0.0
+
+
+def _crit_cves(vuln) -> list:
+    """CVE d'une vuln : `all_cves`, sinon repli sur le champ `cve` (hors '—')."""
+    cves = vuln.get("all_cves", [])
+    if not cves:
+        cve = vuln.get("cve", "")
+        cves = [cve] if cve and cve != "—" else []
+    return cves
+
+
+def _crit_severity(vuln, values, normalize, default) -> float:
+    sev = vuln.get("severity", 0.0)
+    if normalize == "threshold":
+        for v in values:
+            threshold = v.get("threshold")
+            if threshold is not None and sev >= threshold:
+                return v.get("value", default)
+        return default
+    return min(1.0, max(0.0, sev / 10.0))  # scale_0_1 (défaut)
+
+
+def _crit_epss(vuln, values, normalize, default) -> float:
+    epss = vuln.get("euvd_epss")
+    if epss is None:
+        return default
+    if normalize == "threshold":
+        for v in values:
+            threshold = v.get("threshold")
+            if threshold is not None and epss >= threshold:
+                return v.get("value", default)
+        return default
+    return min(1.0, max(0.0, float(epss)))
+
+
+def _crit_qod(vuln) -> float:
+    qod_str = vuln.get("qod", "0")
+    try:
+        qod = float(qod_str.replace("%", "")) if isinstance(qod_str, str) else float(qod_str)
+    except (ValueError, TypeError):
+        qod = 0.0
+    return min(1.0, max(0.0, qod / 100.0))
+
+
+def _crit_kev(vuln, values, kev_data, default) -> float:
+    cves = _crit_cves(vuln)
+    is_in_kev = any(c.upper() in kev_data for c in cves) if kev_data else False
+    for v in values:
+        match = v.get("match")
+        if match is True and is_in_kev:
+            return v.get("value", 1.0)
+        if match is False and not is_in_kev:
+            return v.get("value", 0.0)
+    return default
+
+
+def _crit_anssi(vuln, values, anssi_data, default) -> float:
+    cves = _crit_cves(vuln)
+    # Type ANSSI le plus prioritaire (alerte > avis).
+    anssi_type = None
+    for c in cves:
+        entry = anssi_data.get(c.upper())
+        if entry:
+            entry_type = entry.get("type", "")
+            if entry_type == "alerte":
+                anssi_type = "alerte"
+                break
+            if entry_type == "avis" and anssi_type != "alerte":
+                anssi_type = "avis"
+    if anssi_type:
+        for v in values:
+            if v.get("match") == anssi_type:
+                return v.get("value", 0.5)
+    return default
+
+
+def _crit_host_tag(criterion, host_tags, values, default) -> float:
+    tag_name = criterion.get("tag_name", "")
+    if not tag_name:
+        return default
+    tag_exists = tag_name in host_tags
+    for v in values:
+        match = v.get("match")
+        if match is True and tag_exists:
+            return v.get("value", 1.0)
+        if match is False and not tag_exists:
+            return v.get("value", 0.0)
+    return default
+
+
 def _get_criterion_value(criterion: dict, vuln: dict, host_tags: list[str],
                          kev_data: dict, anssi_data: dict) -> float:
-    """
-    Calcule la valeur d'un critère pour une vulnérabilité donnée.
-    
-    Args:
-        criterion: Définition du critère depuis la config
-        vuln: Dict de la vulnérabilité enrichie
-        host_tags: Liste des tags de l'hôte
-        kev_data: Cache KEV
-        anssi_data: Cache ANSSI
-    
-    Returns:
-        Valeur entre 0 et 1
+    """Calcule la valeur normalisée [0,1] d'un critère pour une vulnérabilité.
+
+    Dispatcher par `source` (severity/epss/qod/kev/anssi/host_tag) ; chaque source
+    est traitée par un handler _crit_* (cf. tests/test_scoring_criteria.py).
+    Source inconnue → valeur par défaut du critère.
     """
     source = criterion.get("source", "")
     values = criterion.get("values", [])
     normalize = criterion.get("normalize", "")
+    default = _crit_default(values)
 
-    # Trouver la valeur par défaut
-    default_value = 0.0
-    for v in values:
-        if "default" in v:
-            default_value = v.get("default", 0.0)
-            break
-
-    # === Source: severity (CVSS) ===
     if source == "severity":
-        sev = vuln.get("severity", 0.0)
-        if normalize == "scale_0_1":
-            return min(1.0, max(0.0, sev / 10.0))
-        elif normalize == "threshold":
-            # Chercher le seuil correspondant
-            for v in values:
-                threshold = v.get("threshold")
-                if threshold is not None and sev >= threshold:
-                    return v.get("value", default_value)
-            return default_value
-        return min(1.0, max(0.0, sev / 10.0))  # Par défaut scale_0_1
-
-    # === Source: epss ===
+        return _crit_severity(vuln, values, normalize, default)
     if source == "epss":
-        epss = vuln.get("euvd_epss")
-        if epss is None:
-            return default_value
-        if normalize == "scale_0_1":
-            return min(1.0, max(0.0, float(epss)))
-        elif normalize == "threshold":
-            for v in values:
-                threshold = v.get("threshold")
-                if threshold is not None and epss >= threshold:
-                    return v.get("value", default_value)
-            return default_value
-        return min(1.0, max(0.0, float(epss)))
-
-    # === Source: qod ===
+        return _crit_epss(vuln, values, normalize, default)
     if source == "qod":
-        qod_str = vuln.get("qod", "0")
-        try:
-            qod = float(qod_str.replace("%", "")) if isinstance(qod_str, str) else float(qod_str)
-        except (ValueError, TypeError):
-            qod = 0.0
-        if normalize == "scale_0_1":
-            return min(1.0, max(0.0, qod / 100.0))
-        return min(1.0, max(0.0, qod / 100.0))
-
-    # === Source: kev ===
+        return _crit_qod(vuln)
     if source == "kev":
-        cves = vuln.get("all_cves", [])
-        if not cves:
-            cve = vuln.get("cve", "")
-            cves = [cve] if cve and cve != "—" else []
-
-        is_in_kev = any(c.upper() in kev_data for c in cves) if kev_data else False
-
-        for v in values:
-            match = v.get("match")
-            if match is True and is_in_kev:
-                return v.get("value", 1.0)
-            elif match is False and not is_in_kev:
-                return v.get("value", 0.0)
-        return default_value
-
-    # === Source: anssi ===
+        return _crit_kev(vuln, values, kev_data, default)
     if source == "anssi":
-        cves = vuln.get("all_cves", [])
-        if not cves:
-            cve = vuln.get("cve", "")
-            cves = [cve] if cve and cve != "—" else []
-
-        # Chercher le type ANSSI le plus prioritaire (alerte > avis)
-        anssi_type = None
-        for c in cves:
-            entry = anssi_data.get(c.upper())
-            if entry:
-                entry_type = entry.get("type", "")
-                if entry_type == "alerte":
-                    anssi_type = "alerte"
-                    break  # Priorité max
-                elif entry_type == "avis" and anssi_type != "alerte":
-                    anssi_type = "avis"
-
-        if anssi_type:
-            for v in values:
-                if v.get("match") == anssi_type:
-                    return v.get("value", 0.5)
-        return default_value
-
-    # === Source: host_tag ===
+        return _crit_anssi(vuln, values, anssi_data, default)
     if source == "host_tag":
-        tag_name = criterion.get("tag_name", "")
-        if not tag_name:
-            return default_value
+        return _crit_host_tag(criterion, host_tags, values, default)
 
-        # Chercher si le tag existe parmi les tags de l'hôte
-        # Format GVM: le tag complet est dans le champ name (ex: "host:exposed")
-        tag_exists = tag_name in host_tags
-
-        for v in values:
-            match = v.get("match")
-            if match is True and tag_exists:
-                return v.get("value", 1.0)
-            elif match is False and not tag_exists:
-                return v.get("value", 0.0)
-        
-        return default_value
-
-    # Source inconnue
     logger.warning(f"Source de critère inconnue: {source}")
-    return default_value
+    return default
 
 
 def calculate_score(vuln: dict, host_tags: list[str] = None,
