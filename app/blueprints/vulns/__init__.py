@@ -50,145 +50,103 @@ def _extract_filter_options(results: list) -> dict:
     }
 
 
-def _group_by_vendor_product(results: list, anssi_data: dict) -> list:
-    """Regroupe les vulnérabilités par vendor puis product (arborescence 2 niveaux)."""
-    
-    # Structure : {vendor: {product: [vulns]}}
-    tree = {}
-    ungrouped = []
+def _collect_cves(vulns) -> set:
+    """CVE uniques d'un groupe de vulns : union de `all_cves` + champ `cve` (hors '—')."""
+    cves = set()
+    for v in vulns:
+        cves.update(v.get("all_cves", []))
+        cve = v.get("cve")
+        if cve and cve != "—":
+            cves.add(cve)
+    return cves
 
+
+def _collect_hosts_ports(vulns) -> set:
+    """Ensemble 'host:port' (ou 'host' si pas de port) des vulns."""
+    out = set()
+    for v in vulns:
+        host = v.get("host", "")
+        if host:
+            port = v.get("port", "")
+            out.add(f"{host}:{port}" if port else host)
+    return out
+
+
+def _collect_solutions(vulns) -> set:
+    """Solutions non vides (strippées) des vulns."""
+    return {v.get("solution", "").strip() for v in vulns if (v.get("solution") or "").strip()}
+
+
+def _collect_anssi_refs(cves, anssi_data) -> list:
+    """Références ANSSI 'TYPE|ref|url' pour les CVE données (dédupliquées, ordre d'itération)."""
+    refs = []
+    for cve in cves:
+        entry = anssi_data.get(cve.upper())
+        if entry:
+            ref_str = f"{entry.get('type', '').upper()}|{entry.get('ref', '')}|{entry.get('url', '')}"
+            if ref_str not in refs:
+                refs.append(ref_str)
+    return refs
+
+
+def _product_summary(name, vulns, anssi_data, extra=None) -> dict:
+    """Agrège les vulns d'un même produit (ou groupe NVT) en une entrée d'affichage."""
+    cves = _collect_cves(vulns)
+    summary = {
+        "product": name,
+        "vulns": vulns,
+        "max_severity": max((v.get("severity", 0) for v in vulns), default=0),
+        "max_score": max((v.get("ctx_score", 0) for v in vulns), default=0),
+        "exploited_count": sum(1 for v in vulns if v.get("euvd_exploited")),
+        "all_cves": sorted(cves),
+        "hosts_ports": sorted(_collect_hosts_ports(vulns)),
+        "solutions": list(_collect_solutions(vulns)),
+        "anssi_refs": _collect_anssi_refs(cves, anssi_data),
+    }
+    if extra:
+        summary.update(extra)
+    return summary
+
+
+def _group_by_vendor_product(results: list, anssi_data: dict) -> list:
+    """Regroupe les vulnérabilités par vendor puis product (arborescence 2 niveaux).
+
+    Les vulns sans vendor EUVD sont regroupées à part par nom NVT dans un groupe
+    « Non classifié ». Vendors et produits triés par sévérité max décroissante.
+    """
+    tree: dict = {}
+    ungrouped = []
     for v in results:
         vendor = _norm_vendor(v.get("euvd_vendor") or "")
         product = _norm_product(v.get("euvd_product") or "")
-
         if vendor == "—":
             ungrouped.append(v)
             continue
+        tree.setdefault(vendor, {}).setdefault(product, []).append(v)
 
-        if vendor not in tree:
-            tree[vendor] = {}
-        if product not in tree[vendor]:
-            tree[vendor][product] = []
-        tree[vendor][product].append(v)
-
-    # Convertir en liste structurée
     groups = []
     for vendor, products in tree.items():
-        vendor_group = {
+        prods = [_product_summary(p, vulns, anssi_data) for p, vulns in products.items()]
+        prods.sort(key=lambda p: p["max_severity"], reverse=True)
+        groups.append({
             "vendor": vendor,
-            "products": [],
-            "total_vulns": 0,
-            "max_severity": 0,
-            "exploited_count": 0,
-        }
+            "products": prods,
+            "total_vulns": sum(len(vulns) for vulns in products.values()),
+            "max_severity": max((p["max_severity"] for p in prods), default=0),
+            "exploited_count": sum(p["exploited_count"] for p in prods),
+        })
 
-        for product, vulns in products.items():
-            # Collecter toutes les CVE uniques
-            all_cves = set()
-            for v in vulns:
-                for c in v.get("all_cves", []):
-                    all_cves.add(c)
-                if v.get("cve") and v.get("cve") != "—":
-                    all_cves.add(v.get("cve"))
-            
-            # Collecter tous les hôtes:ports uniques
-            hosts_ports = set()
-            for v in vulns:
-                host = v.get("host", "")
-                port = v.get("port", "")
-                if host:
-                    hosts_ports.add(f"{host}:{port}" if port else host)
-            
-            # Collecter les solutions uniques
-            solutions = set()
-            for v in vulns:
-                sol = v.get("solution", "")
-                if sol and sol.strip():
-                    solutions.add(sol.strip())
-            
-            # Collecter les références ANSSI
-            anssi_refs = []
-            for cve in all_cves:
-                entry = anssi_data.get(cve.upper())
-                if entry:
-                    ref_str = f"{entry.get('type', '').upper()}|{entry.get('ref', '')}|{entry.get('url', '')}"
-                    if ref_str not in [r for r in anssi_refs]:
-                        anssi_refs.append(ref_str)
-            
-            # Score max
-            max_score = max((v.get("ctx_score", 0) for v in vulns), default=0)
-            
-            product_group = {
-                "product": product,
-                "vulns": vulns,
-                "max_severity": max((v.get("severity", 0) for v in vulns), default=0),
-                "max_score": max_score,
-                "exploited_count": sum(1 for v in vulns if v.get("euvd_exploited")),
-                "all_cves": sorted(all_cves),
-                "hosts_ports": sorted(hosts_ports),
-                "solutions": list(solutions),
-                "anssi_refs": anssi_refs,
-            }
-            vendor_group["products"].append(product_group)
-            vendor_group["total_vulns"] += len(vulns)
-            vendor_group["max_severity"] = max(vendor_group["max_severity"], product_group["max_severity"])
-            vendor_group["exploited_count"] += product_group["exploited_count"]
-
-        # Trier products par sévérité max
-        vendor_group["products"].sort(key=lambda p: p["max_severity"], reverse=True)
-        groups.append(vendor_group)
-
-    # Trier vendors par sévérité max
     groups.sort(key=lambda g: g["max_severity"], reverse=True)
 
-    # Ajouter les vulns sans données EUVD — groupées par nom NVT (1 niveau)
+    # Vulns sans données EUVD — groupées par nom NVT (1 niveau)
     if ungrouped:
         nvt_tree: dict = {}
         for v in ungrouped:
             nvt_name = v.get("nvt_name") or v.get("name") or "—"
             nvt_tree.setdefault(nvt_name, []).append(v)
-
-        nvt_products = []
-        for nvt_name, vulns in nvt_tree.items():
-            all_cves_n: set = set()
-            hosts_ports_n: set = set()
-            solutions_n: set = set()
-            for v in vulns:
-                for c in v.get("all_cves", []):
-                    all_cves_n.add(c)
-                if v.get("cve") and v.get("cve") != "—":
-                    all_cves_n.add(v.get("cve"))
-                host = v.get("host", "")
-                port = v.get("port", "")
-                if host:
-                    hosts_ports_n.add(f"{host}:{port}" if port else host)
-                sol = v.get("solution", "")
-                if sol and sol.strip():
-                    solutions_n.add(sol.strip())
-
-            anssi_refs_n = []
-            for cve in all_cves_n:
-                entry = anssi_data.get(cve.upper())
-                if entry:
-                    ref_str = f"{entry.get('type', '').upper()}|{entry.get('ref', '')}|{entry.get('url', '')}"
-                    if ref_str not in anssi_refs_n:
-                        anssi_refs_n.append(ref_str)
-
-            nvt_products.append({
-                "product": nvt_name,
-                "nvt_group": True,
-                "vulns": vulns,
-                "max_severity": max((v.get("severity", 0) for v in vulns), default=0),
-                "max_score": max((v.get("ctx_score", 0) for v in vulns), default=0),
-                "exploited_count": sum(1 for v in vulns if v.get("euvd_exploited")),
-                "all_cves": sorted(all_cves_n),
-                "hosts_ports": sorted(hosts_ports_n),
-                "solutions": list(solutions_n),
-                "anssi_refs": anssi_refs_n,
-            })
-
+        nvt_products = [_product_summary(name, vulns, anssi_data, extra={"nvt_group": True})
+                        for name, vulns in nvt_tree.items()]
         nvt_products.sort(key=lambda p: p["max_severity"], reverse=True)
-
         groups.append({
             "vendor": "Non classifié",
             "unclassified": True,
