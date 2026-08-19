@@ -2274,10 +2274,55 @@ def _task_cpe_watch_local():
 NVD_CPE_API = "https://services.nvd.nist.gov/rest/json/cpes/2.0"
 
 
-def _task_refresh_cpe_dict():
-    """Synchro incrémentale du dictionnaire CPE depuis l'API NVD."""
+def _parse_cpe_product(p):
+    """Produit CPE (API NVD) → tuple pour cpe_dictionary, ou None si nom invalide."""
+    cpe = p.get("cpe", {})
+    cpe_name = cpe.get("cpeName", "")
+    parts = cpe_name.split(":")
+    if len(parts) < 6:
+        return None
+    titles = cpe.get("titles", [])
+    title = ""
+    for t in titles:
+        if t.get("lang", "en").startswith("en"):
+            title = t.get("title", "")
+            break
+    if not title and titles:
+        title = titles[0].get("title", "")
+    return (
+        cpe_name, parts[2], parts[3], parts[4],
+        parts[5] if parts[5] != "*" else "",
+        parts[6] if len(parts) > 6 and parts[6] != "*" else "",
+        title,
+        cpe.get("created", ""),
+        cpe.get("lastModified", ""),
+    )
+
+
+def _fetch_cpe_page(url):
+    """Télécharge une page JSON de l'API NVD CPE, avec retries. None si échec."""
     import urllib.request
     import urllib.error
+    for attempt in range(10):
+        try:
+            req = urllib.request.Request(url, headers={
+                "Accept": "application/json",
+                "User-Agent": "GMPilot-CPE/1.0",
+            })
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
+            wait = min((attempt + 1) * 15, 120)
+            logger.warning(f"[CPE DICT] Erreur page: {e} — retry {attempt+1}/10 dans {wait}s")
+            time.sleep(wait)
+        except Exception as e:
+            logger.error(f"[CPE DICT] Erreur inattendue: {e}")
+            time.sleep(30)
+    return None
+
+
+def _task_refresh_cpe_dict():
+    """Synchro incrémentale du dictionnaire CPE depuis l'API NVD."""
     from app.tasks import update_task_status
     from app.db import connect_db
 
@@ -2307,24 +2352,7 @@ def _task_refresh_cpe_dict():
         update_task_status("cpe_dict", progress=f"{total_imported}+",
                            message=f"Téléchargement page (index {start_index})...")
 
-        data = None
-        for attempt in range(10):
-            try:
-                req = urllib.request.Request(url, headers={
-                    "Accept": "application/json",
-                    "User-Agent": "GMPilot-CPE/1.0",
-                })
-                with urllib.request.urlopen(req, timeout=120) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                break
-            except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
-                wait = min((attempt + 1) * 15, 120)
-                logger.warning(f"[CPE DICT] Erreur page index={start_index}: {e} — retry {attempt+1}/10 dans {wait}s")
-                time.sleep(wait)
-            except Exception as e:
-                logger.error(f"[CPE DICT] Erreur inattendue: {e}")
-                time.sleep(30)
-
+        data = _fetch_cpe_page(url)
         if not data:
             logger.error(f"[CPE DICT] Échec page index={start_index} après 10 tentatives — skip")
             start_index += results_per_page
@@ -2333,32 +2361,7 @@ def _task_refresh_cpe_dict():
         products = data.get("products", [])
         total_results = data.get("totalResults", 0)
 
-        batch = []
-        for p in products:
-            cpe = p.get("cpe", {})
-            cpe_name = cpe.get("cpeName", "")
-            parts = cpe_name.split(":")
-            if len(parts) < 6:
-                continue
-
-            titles = cpe.get("titles", [])
-            title = ""
-            for t in titles:
-                if t.get("lang", "en").startswith("en"):
-                    title = t.get("title", "")
-                    break
-            if not title and titles:
-                title = titles[0].get("title", "")
-
-            batch.append((
-                cpe_name, parts[2], parts[3], parts[4],
-                parts[5] if parts[5] != "*" else "",
-                parts[6] if len(parts) > 6 and parts[6] != "*" else "",
-                title,
-                cpe.get("created", ""),
-                cpe.get("lastModified", ""),
-            ))
-
+        batch = [t for t in (_parse_cpe_product(p) for p in products) if t is not None]
         if batch:
             conn = connect_db()
             conn.executemany(
@@ -2378,6 +2381,7 @@ def _task_refresh_cpe_dict():
             time.sleep(rate_limit)
 
     logger.info(f"[CPE DICT] Terminé: {total_imported} CPEs importés")
+
 
 def _task_refresh_cve():
     """Tâche de fond pour rafraîchir le cache CVE."""
