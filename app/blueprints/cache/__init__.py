@@ -427,16 +427,48 @@ def read_cve_cache(cve_id: str) -> dict | None:
 MITRE_CVE_API = "https://cveawg.mitre.org/api/cve"
 
 
+def _parse_mitre_cve(raw: dict, cve_id: str) -> dict:
+    """Transforme une réponse MITRE brute en entrée CVE minimale (description + score)."""
+    state = raw.get("cveMetadata", {}).get("state", "")
+    desc = ""
+    base_score = None
+    base_vector = ""
+    if state == "PUBLISHED":
+        cna = raw.get("containers", {}).get("cna", {})
+        for d in cna.get("descriptions", []):
+            if d.get("lang", "en").startswith("en"):
+                desc = d.get("value", "")
+                break
+        if not desc and cna.get("descriptions"):
+            desc = cna["descriptions"][0].get("value", "")
+        for m in cna.get("metrics", []):
+            for key in ("cvssV4_0", "cvssV3_1", "cvssV3_0", "cvssV2_0"):
+                if key in m:
+                    base_score = m[key].get("baseScore")
+                    base_vector = m[key].get("vectorString", "")
+                    break
+            if base_score is not None:
+                break
+    return {
+        "id": cve_id,
+        "description": desc or f"CVE {state}",
+        "baseScore": base_score,
+        "baseScoreVector": base_vector,
+        "datePublished": raw.get("cveMetadata", {}).get("datePublished", ""),
+        "_source": "mitre",
+        "_state": state,
+    }
+
+
 def fetch_cve_from_euvd(cve_id: str) -> tuple[dict | None, str | None]:
-    """
-    Appelle l'API EUVD pour une CVE, avec fallback MITRE si EUVD échoue.
+    """Appelle l'API EUVD pour une CVE, avec fallback MITRE si EUVD échoue.
+
     Rate-limit et gestion 429 unifiés via _api_get_json(). Retourne (data, error).
     """
     import urllib.error
 
     cve_id = cve_id.upper().strip()
 
-    # Tentative EUVD
     data, euvd_err = _api_get_json(f"{EUVD_API_BASE}?id={cve_id}", label=f"CVE {cve_id}")
     if data is not None:
         return data, None
@@ -447,42 +479,9 @@ def fetch_cve_from_euvd(cve_id: str) -> tuple[dict | None, str | None]:
     if raw is None:
         return None, f"EUVD+MITRE: {mitre_err}"
     try:
-        state = raw.get("cveMetadata", {}).get("state", "")
-
-        desc = ""
-        base_score = None
-        base_vector = ""
-
-        if state == "PUBLISHED":
-            cna = raw.get("containers", {}).get("cna", {})
-            for d in cna.get("descriptions", []):
-                if d.get("lang", "en").startswith("en"):
-                    desc = d.get("value", "")
-                    break
-            if not desc and cna.get("descriptions"):
-                desc = cna["descriptions"][0].get("value", "")
-
-            for m in cna.get("metrics", []):
-                for key in ("cvssV4_0", "cvssV3_1", "cvssV3_0", "cvssV2_0"):
-                    if key in m:
-                        base_score = m[key].get("baseScore")
-                        base_vector = m[key].get("vectorString", "")
-                        break
-                if base_score is not None:
-                    break
-
-        data = {
-            "id": cve_id,
-            "description": desc or f"CVE {state}",
-            "baseScore": base_score,
-            "baseScoreVector": base_vector,
-            "datePublished": raw.get("cveMetadata", {}).get("datePublished", ""),
-            "_source": "mitre",
-            "_state": state,
-        }
-        logger.info(f"CVE {cve_id}: récupérée depuis MITRE ({state})")
+        data = _parse_mitre_cve(raw, cve_id)
+        logger.info(f"CVE {cve_id}: récupérée depuis MITRE ({data['_state']})")
         return data, None
-
     except urllib.error.HTTPError as e:
         return None, f"EUVD+MITRE: HTTP {e.code}"
     except urllib.error.URLError as e:
