@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 RESULTS_FILTER = "rows=-1 min_qod=70 apply_overrides=1 levels=mhc sort-reverse=severity"
 
 
-def main():
+def main():  # noqa: C901 — script one-off GVM-couplé, non testé : refactor non prioritaire
     parser = argparse.ArgumentParser(description="Import historique des rapports GVM")
     parser.add_argument("--username", required=True)
     parser.add_argument("--password", required=True)

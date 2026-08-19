@@ -1,23 +1,23 @@
 # Configuration ruff — gate qualité (cf. .github/workflows/ci.yml).
 #
 # On impose les règles de CORRECTION qui attrapent de vrais bugs :
-#   E9  — erreurs de syntaxe
-#   F   — pyflakes (imports/variables morts, noms non définis…)
-#   B   — flake8-bugbear (anti-patterns réels)
+#   E9   — erreurs de syntaxe
+#   F    — pyflakes (imports/variables morts, noms non définis…)
+#   B    — flake8-bugbear (anti-patterns réels)
+#   C901 — complexité cyclomatique (max 12), après le chantier de découpe
 #
 # Les règles de STYLE que ce codebase ne suit volontairement pas ne sont PAS
 # imposées : imports différés dans les fonctions (E402), gardes sur une ligne
 # `if x: return` (E701), etc.
 #
-# La complexité (C901) est un chantier connu (plusieurs fonctions >12) : laissée
-# informative ici — l'ajouter à `select` l'imposerait une fois les fonctions
-# découpées.
+# Toutes les fonctions de l'app sont ≤12. Seule exception grandfatherée :
+# scripts/import_history.py:main (script one-off, marqué `# noqa: C901`).
 
 line-length = 120
 target-version = "py311"
 
 [lint]
-select = ["E9", "F", "B"]
+select = ["E9", "F", "B", "C901"]
 
 [lint.mccabe]
 max-complexity = 12
