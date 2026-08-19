@@ -1854,24 +1854,255 @@ def _extract_cve_entries(euvd_items: list[dict], product: str) -> list[dict]:
     return entries
 
 
+def _cpe_load_json(s):
+    """json.loads tolérant → [] si vide/invalide."""
+    try:
+        return json.loads(s)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def _cpe_match_state(version, product_ranges):
+    """Agrège l'état sur plusieurs plages : AFFECTED prime, puis UNKNOWN (doute)."""
+    states = [_version_in_range(version, r) for r in product_ranges]
+    if MATCH_AFFECTED in states:
+        return MATCH_AFFECTED
+    if MATCH_UNKNOWN in states:
+        return MATCH_UNKNOWN
+    return MATCH_NOT_AFFECTED
+
+
+def _cpe_upsert_finding(conn, vendor, product, host_ip, entry, match_state, now):
+    """Crée/maj vulnerability + finding + sighting pour une CVE affectée.
+    Retourne la clé (vuln_id, host_ip) vue cette exécution."""
+    cve_id = entry["cve"]
+    confidence = "confirmed" if match_state == MATCH_AFFECTED else "unknown"
+    vuln_name = f"[CPE] {cve_id} — {vendor}/{product}"
+    oid = f"cpe-watch:{cve_id}:{vendor}:{product}"
+
+    cur = conn.execute(
+        """INSERT INTO vulnerabilities (oid, name, family, cvss_base, solution)
+           VALUES (?, ?, 'CPE Watch', ?, '')
+           ON CONFLICT(oid) DO UPDATE SET name=excluded.name, cvss_base=excluded.cvss_base
+           RETURNING id""",
+        (oid, vuln_name, entry["score"]),
+    )
+    vuln_id = cur.fetchone()[0]
+    conn.execute("INSERT OR IGNORE INTO vuln_cves(vuln_id, cve_id) VALUES(?, ?)", (vuln_id, cve_id))
+
+    sev = entry["score"] or 0
+    threat = "Critical" if sev >= 9 else "High" if sev >= 7 else "Medium" if sev >= 4 else "Low"
+    match_range = " ; ".join(entry["ranges"])  # plages du produit SURVEILLÉ
+    cur = conn.execute(
+        """INSERT INTO findings
+             (vuln_id, host_ip, port, severity, qod, threat, description,
+              primary_cve, vendor, product, status, first_seen, last_seen,
+              match_confidence, match_range)
+           VALUES (?, ?, 'N/A', ?, 100, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+           ON CONFLICT(vuln_id, host_ip, port) DO UPDATE SET
+             severity=MAX(findings.severity, excluded.severity),
+             last_seen=excluded.last_seen,
+             status=CASE WHEN findings.status='false_positive'
+                          THEN 'false_positive' ELSE 'active' END,
+             resolved_at=CASE WHEN findings.status='false_positive'
+                          THEN findings.resolved_at ELSE NULL END,
+             match_confidence=excluded.match_confidence,
+             vendor=excluded.vendor, product=excluded.product,
+             match_range=excluded.match_range
+           RETURNING id""",
+        (vuln_id, host_ip, sev, threat, entry["desc"], cve_id,
+         vendor, product, now, now, confidence, match_range),
+    )
+    finding_id = cur.fetchone()[0]
+    conn.execute(
+        """INSERT OR IGNORE INTO sightings
+             (finding_id, task_id, task_name, report_id, scan_date)
+           VALUES (?, 'cpe_watch', 'CPE Watch', ?, ?)""",
+        (finding_id, f"cpe_watch_{now[:10]}", now),
+    )
+    return vuln_id, host_ip
+
+
+def _cpe_fetch_entries(conn, vendor, product, prev, has_base, current_sig, now):
+    """Fetch EUVD (incrémental si base existe) → (cve_entries, fetch_complete) + cache."""
+    from_date = prev["fetched_at"][:10] if (has_base and prev and prev["fetched_at"]) else None
+    euvd_items, fetch_complete = _fetch_euvd_vulns(vendor, product, from_updated_date=from_date)
+    new_entries = _extract_cve_entries(euvd_items, product)
+    if from_date is not None:
+        # Fusion : la base fusionnée est notre meilleur jeu → considérée complète.
+        merged = {e["cve"]: e for e in _cpe_load_json(prev["data"])}
+        for e in new_entries:
+            merged[e["cve"]] = e
+        cve_entries = list(merged.values())
+        fetch_complete = True
+        logger.info(
+            f"[CPE WATCH] {vendor}/{product} — incrémental depuis {from_date} : "
+            f"+{len(new_entries)} MàJ → {len(cve_entries)} CVE au total")
+    else:
+        cve_entries = new_entries
+        logger.info(
+            f"[CPE WATCH] {vendor}/{product} — {len(cve_entries)} CVE EUVD "
+            f"(catalogue complet, fetch {'complet' if fetch_complete else 'PARTIEL'})")
+    conn.execute(
+        """INSERT INTO cpe_watch_cache
+             (vendor, product, complete, fetched_at, data, versions_sig, evaluated_at)
+           VALUES(?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(vendor, product) DO UPDATE SET
+             complete=excluded.complete, fetched_at=excluded.fetched_at,
+             data=excluded.data, versions_sig=excluded.versions_sig,
+             evaluated_at=excluded.evaluated_at""",
+        (vendor, product, 1 if fetch_complete else 0, now,
+         json.dumps(cve_entries, ensure_ascii=False), current_sig, now),
+    )
+    return cve_entries, fetch_complete
+
+
+def _cpe_determine_entries(conn, vendor, product, sw_group, use_cache, fresh_cutoff, now):
+    """Détermine (cve_entries, fetch_complete) d'un produit, ou None si à ignorer ce cycle.
+    Met à jour cpe_watch_cache selon le mode (local forcé / incrémental / fetch)."""
+    current_sig = "|".join(sorted(
+        f"{(sw['host_ip'] or 'monitored')}={sw['version'] or '*'}" for sw in sw_group))
+
+    if use_cache:
+        row = conn.execute(
+            "SELECT complete, data FROM cpe_watch_cache WHERE vendor=? AND product=?",
+            (vendor, product)).fetchone()
+        if row is None:
+            logger.info(f"[CPE WATCH] {vendor}/{product} — pas de cache, ignoré (mode local)")
+            return None
+        cve_entries = _cpe_load_json(row["data"])
+        fetch_complete = bool(row["complete"])
+        conn.execute(
+            "UPDATE cpe_watch_cache SET versions_sig=?, evaluated_at=? WHERE vendor=? AND product=?",
+            (current_sig, now, vendor, product))
+        logger.info(f"[CPE WATCH] {vendor}/{product} — {len(cve_entries)} CVE (cache local, "
+                    f"{'complet' if fetch_complete else 'PARTIEL'})")
+        return cve_entries, fetch_complete
+
+    prev = conn.execute(
+        "SELECT complete, fetched_at, versions_sig, data FROM cpe_watch_cache "
+        "WHERE vendor=? AND product=?", (vendor, product)).fetchone()
+    has_base = bool(prev and prev["data"] and prev["data"] != "[]")
+    if fresh_cutoff is not None and has_base:
+        fresh = prev["fetched_at"] and prev["fetched_at"] >= fresh_cutoff
+        version_changed = prev["versions_sig"] != current_sig
+        if fresh and not version_changed:
+            logger.info(f"[CPE WATCH] {vendor}/{product} — à jour, versions inchangées, ignoré")
+            return None
+        if fresh and version_changed:
+            cve_entries = _cpe_load_json(prev["data"])
+            conn.execute(
+                "UPDATE cpe_watch_cache SET versions_sig=?, evaluated_at=? WHERE vendor=? AND product=?",
+                (current_sig, now, vendor, product))
+            logger.info(f"[CPE WATCH] {vendor}/{product} — version changée → réévaluation locale "
+                        f"({len(cve_entries)} CVE, sans fetch)")
+            return cve_entries, True
+
+    return _cpe_fetch_entries(conn, vendor, product, prev, has_base, current_sig, now)
+
+
+def _cpe_resolve_group(conn, vendor, product, seen_vuln_keys, evaluated_cve_ids, now):
+    """Résout les findings actifs de ce produit dont la version n'est plus affectée
+    (et dont la CVE a bien été évaluée ce cycle). Retourne le nombre résolu."""
+    safe_v = vendor.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    safe_p = product.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    existing = conn.execute(
+        """SELECT f.id, f.vuln_id, f.host_ip, v.oid FROM findings f
+           JOIN vulnerabilities v ON f.vuln_id = v.id
+           WHERE v.oid LIKE ? ESCAPE '\\' AND f.status = 'active'""",
+        (f"cpe-watch:%:{safe_v}:{safe_p}",)).fetchall()
+    resolved = 0
+    for row in existing:
+        if (row["vuln_id"], row["host_ip"]) in seen_vuln_keys:
+            continue  # version toujours affectée → conserver
+        oid_parts = row["oid"].split(":", 3)
+        cve_in_oid = oid_parts[1] if len(oid_parts) == 4 else ""
+        if cve_in_oid not in evaluated_cve_ids:
+            continue  # EUVD ne l'a pas retourné ce cycle → préserver
+        conn.execute("UPDATE findings SET status='resolved', resolved_at=? WHERE id=?", (now, row["id"]))
+        resolved += 1
+    return resolved
+
+
+def _cpe_cleanup_orphans(conn, software_list, now):
+    """Résout les findings CPE Watch dont le (vendor, product) n'est plus surveillé
+    (renommage/suppression). Retourne le nombre résolu."""
+    monitored_pairs = {(sw["vendor"], sw["product"]) for sw in software_list}
+    orphaned = conn.execute(
+        "SELECT f.id, v.oid FROM findings f"
+        " JOIN vulnerabilities v ON f.vuln_id = v.id"
+        " WHERE v.family='CPE Watch' AND f.status='active'").fetchall()
+    orphan_count = 0
+    for row in orphaned:
+        oid_parts = row["oid"].split(":", 3)
+        if len(oid_parts) == 4:
+            _, _, oid_vendor, oid_product = oid_parts
+            if (oid_vendor, oid_product) not in monitored_pairs:
+                conn.execute("UPDATE findings SET status='resolved', resolved_at=? WHERE id=?", (now, row["id"]))
+                orphan_count += 1
+    if orphan_count:
+        logger.info(f"[CPE WATCH] Nettoyage orphelins: {orphan_count} finding(s) résolus (produit retiré ou renommé)")
+        conn.commit()
+    return orphan_count
+
+
+def _cpe_process_group(conn, vendor, product, sw_group, use_cache, fresh_cutoff, now,
+                       total_sw, idx, progress_callback):
+    """Traite un groupe (vendor, product) : détermine les CVE, crée les findings
+    affectés, puis résout ceux qui ne le sont plus. Retourne (créés, résolus, idx)."""
+    result = _cpe_determine_entries(conn, vendor, product, sw_group, use_cache, fresh_cutoff, now)
+    if result is None:
+        return 0, 0, idx
+    cve_entries, fetch_complete = result
+
+    seen_vuln_keys: set[tuple] = set()
+    evaluated_cve_ids: set[str] = set()
+    created = 0
+
+    for sw in sw_group:
+        idx += 1
+        host_ip = sw["host_ip"] or "monitored"
+        version = sw["version"]
+
+        # Libérer le verrou d'écriture avant le progress_callback (autre connexion).
+        conn.commit()
+        if progress_callback:
+            progress_callback(idx, total_sw, vendor, product)
+        logger.info(f"[CPE WATCH] [{idx}/{total_sw}] {vendor}/{product}@{host_ip} v{version or '*'}...")
+
+        for entry in cve_entries:
+            if not entry["ranges"]:
+                continue
+            evaluated_cve_ids.add(entry["cve"])
+            match_state = _cpe_match_state(version, entry["ranges"])
+            logger.debug(f"[CPE WATCH] {entry['cve']} — {vendor}/{product} v{version or '*'} "
+                         f"{match_state} (ranges: {entry['ranges']})")
+            if match_state == MATCH_NOT_AFFECTED:
+                continue
+            seen_vuln_keys.add(
+                _cpe_upsert_finding(conn, vendor, product, host_ip, entry, match_state, now))
+            created += 1
+
+    if not fetch_complete:
+        logger.warning(f"[CPE WATCH] {vendor}/{product} — fetch partiel, résolution ignorée "
+                       f"(findings existants préservés)")
+        conn.commit()
+        return created, 0, idx
+
+    resolved = _cpe_resolve_group(conn, vendor, product, seen_vuln_keys, evaluated_cve_ids, now)
+    conn.commit()
+    return created, resolved, idx
+
+
 def check_monitored_software(item_id: int | None = None, progress_callback=None,
                              use_cache: bool = False):
     """Vérifie les CVE pour tous les logiciels surveillés (ou un seul si item_id fourni).
     progress_callback(current, total, vendor, product) est appelé avant chaque item.
     Crée des findings source='cpe_watch' pour les vulns détectées.
 
-    Deux modes :
-
-    use_cache=False (surveillance en ligne, incrémentale) — par produit :
-      • version inchangée ET cache frais (< intervalle) → SKIP (rien de neuf) ;
-      • version changée mais cache frais → réévaluation depuis le cache, SANS fetch
-        (résolution comprise) ;
-      • cache périmé / partiel / absent → fetch EUVD (récupère les NOUVELLES CVE).
-
-    use_cache=True (réévaluation locale FORCÉE) — relit les plages depuis
-    cpe_watch_cache et réévalue TOUS les produits (même version inchangée), sans
-    aucun appel réseau. Sert à réappliquer un correctif du moteur de matching aux
-    anciens findings. Un produit sans cache est ignoré.
+    use_cache=False : surveillance en ligne incrémentale (skip/réévaluation/fetch EUVD
+    par produit). use_cache=True : réévaluation locale FORCÉE depuis cpe_watch_cache,
+    sans réseau. Voir les handlers _cpe_* pour le détail de chaque étape.
     """
     from app.db import connect_db
     from collections import defaultdict
@@ -1881,17 +2112,12 @@ def check_monitored_software(item_id: int | None = None, progress_callback=None,
     try:
         if item_id is not None:
             software_list = conn.execute(
-                "SELECT * FROM monitored_software WHERE id=?", (item_id,)
-            ).fetchall()
+                "SELECT * FROM monitored_software WHERE id=?", (item_id,)).fetchall()
         else:
             software_list = conn.execute("SELECT * FROM monitored_software").fetchall()
         if not software_list:
             return
 
-        # Skip incrémental (run complet en ligne uniquement) : un produit vérifié
-        # avec succès il y a moins de ~90 % de l'intervalle configuré n'est pas
-        # re-interrogé. Évite de tout re-télécharger à chaque « Lancer la vérification »
-        # et, après un run partiel, ne refait que les produits pas encore à jour.
         fresh_cutoff = None
         if item_id is None and not use_cache:
             from app.auth.roles import app_settings
@@ -1905,295 +2131,20 @@ def check_monitored_software(item_id: int | None = None, progress_callback=None,
         total_resolved = 0
         total_sw = len(software_list)
 
-        # Regrouper par (vendor, product) : la résolution doit couvrir TOUS les hôtes
-        # qui surveillent le même produit pour éviter de les résoudre mutuellement.
         groups: dict[tuple, list] = defaultdict(list)
         for sw in software_list:
             groups[(sw["vendor"], sw["product"])].append(sw)
 
         idx = 0
         for (vendor, product), sw_group in groups.items():
-            # Signature des versions surveillées de ce produit (tous les hôtes).
-            # Sert au skip incrémental par version : inchangée → matching identique.
-            current_sig = "|".join(sorted(
-                f"{(sw['host_ip'] or 'monitored')}={sw['version'] or '*'}" for sw in sw_group))
+            created, resolved, idx = _cpe_process_group(
+                conn, vendor, product, sw_group, use_cache, fresh_cutoff, now,
+                total_sw, idx, progress_callback)
+            total_created += created
+            total_resolved += resolved
 
-            # Source des plages : cache local (réévaluation forcée) ou EUVD (surveillance)
-            if use_cache:
-                # Réévaluation locale FORCÉE : réévalue TOUS les produits en cache,
-                # même à version inchangée (réapplique un correctif de matching).
-                row = conn.execute(
-                    "SELECT complete, data FROM cpe_watch_cache WHERE vendor=? AND product=?",
-                    (vendor, product),
-                ).fetchone()
-                if row is None:
-                    logger.info(f"[CPE WATCH] {vendor}/{product} — pas de cache, ignoré (mode local)")
-                    continue
-                try:
-                    cve_entries = json.loads(row["data"])
-                except (json.JSONDecodeError, TypeError):
-                    cve_entries = []
-                fetch_complete = bool(row["complete"])
-                conn.execute(
-                    "UPDATE cpe_watch_cache SET versions_sig=?, evaluated_at=? WHERE vendor=? AND product=?",
-                    (current_sig, now, vendor, product),
-                )
-                logger.info(
-                    f"[CPE WATCH] {vendor}/{product} — {len(cve_entries)} CVE (cache local, "
-                    f"{'complet' if fetch_complete else 'PARTIEL'})"
-                )
-            else:
-                # Surveillance en ligne INCRÉMENTALE (run complet uniquement) :
-                #   version inchangée + cache frais → skip
-                #   version changée + cache frais   → réévaluation locale (sans fetch)
-                #   sinon → fetch EUVD : INCRÉMENTAL par date (fromUpdatedDate) si un
-                #           cache complet existe → seules les CVE mises à jour depuis le
-                #           dernier fetch sont téléchargées, puis fusionnées dans le cache.
-                prev = conn.execute(
-                    "SELECT complete, fetched_at, versions_sig, data FROM cpe_watch_cache "
-                    "WHERE vendor=? AND product=?", (vendor, product),
-                ).fetchone()
-                # Une base utilisable = des données en cache (même marquée incomplète :
-                # EUVD renvoie du plus récent au plus ancien, donc un fetch partiel a les
-                # CVE récentes = pertinentes ; l'incrémental par date la maintient à jour).
-                has_base = bool(prev and prev["data"] and prev["data"] != "[]")
-                reeval_only = False
-                if fresh_cutoff is not None and has_base:
-                    fresh = prev["fetched_at"] and prev["fetched_at"] >= fresh_cutoff
-                    version_changed = prev["versions_sig"] != current_sig
-                    if fresh and not version_changed:
-                        logger.info(f"[CPE WATCH] {vendor}/{product} — à jour, versions inchangées, ignoré")
-                        continue
-                    if fresh and version_changed:
-                        reeval_only = True  # version changée mais CVE fraîches → pas de fetch
-
-                if reeval_only:
-                    try:
-                        cve_entries = json.loads(prev["data"])
-                    except (json.JSONDecodeError, TypeError):
-                        cve_entries = []
-                    fetch_complete = True
-                    conn.execute(
-                        "UPDATE cpe_watch_cache SET versions_sig=?, evaluated_at=? WHERE vendor=? AND product=?",
-                        (current_sig, now, vendor, product),
-                    )
-                    logger.info(
-                        f"[CPE WATCH] {vendor}/{product} — version changée → réévaluation locale "
-                        f"({len(cve_entries)} CVE, sans fetch)"
-                    )
-                else:
-                    # Fetch incrémental par date dès qu'une base existe (fromUpdatedDate),
-                    # sinon fetch complet (premier amorçage : aucune base).
-                    from_date = None
-                    if has_base and prev["fetched_at"]:
-                        from_date = prev["fetched_at"][:10]  # YYYY-MM-DD
-                    euvd_items, fetch_complete = _fetch_euvd_vulns(
-                        vendor, product, from_updated_date=from_date)
-                    new_entries = _extract_cve_entries(euvd_items, product)
-                    if from_date is not None:
-                        # Fusion : mise à jour/ajout des CVE modifiées dans la base.
-                        # La base fusionnée est notre meilleur jeu complet → on la
-                        # considère complète (résolution autorisée) même si la requête
-                        # incrémentale a échoué partiellement (on ne perd rien).
-                        try:
-                            old_entries = json.loads(prev["data"])
-                        except (json.JSONDecodeError, TypeError):
-                            old_entries = []
-                        merged = {e["cve"]: e for e in old_entries}
-                        for e in new_entries:
-                            merged[e["cve"]] = e
-                        cve_entries = list(merged.values())
-                        fetch_complete = True
-                        logger.info(
-                            f"[CPE WATCH] {vendor}/{product} — incrémental depuis {from_date} : "
-                            f"+{len(new_entries)} MàJ → {len(cve_entries)} CVE au total"
-                        )
-                    else:
-                        cve_entries = new_entries
-                        logger.info(
-                            f"[CPE WATCH] {vendor}/{product} — {len(cve_entries)} CVE EUVD "
-                            f"(catalogue complet, fetch {'complet' if fetch_complete else 'PARTIEL'})"
-                        )
-                    conn.execute(
-                        """INSERT INTO cpe_watch_cache
-                             (vendor, product, complete, fetched_at, data, versions_sig, evaluated_at)
-                           VALUES(?, ?, ?, ?, ?, ?, ?)
-                           ON CONFLICT(vendor, product) DO UPDATE SET
-                             complete=excluded.complete, fetched_at=excluded.fetched_at,
-                             data=excluded.data, versions_sig=excluded.versions_sig,
-                             evaluated_at=excluded.evaluated_at""",
-                        (vendor, product, 1 if fetch_complete else 0, now,
-                         json.dumps(cve_entries, ensure_ascii=False), current_sig, now),
-                    )
-
-            # seen_vuln_keys  : (vuln_id, host_ip) dont la version matche cette exécution
-            # evaluated_cve_ids : CVE IDs dont on a le range ET qu'on a évalués.
-            #   Seuls ces CVEs peuvent déclencher une résolution : si le range est absent
-            #   (réseau/pagination incomplète), on preserve le finding plutôt que de créer
-            #   un faux-négatif transitoire (source du flapping).
-            seen_vuln_keys: set[tuple] = set()
-            evaluated_cve_ids: set[str] = set()
-
-            for sw in sw_group:
-                idx += 1
-                host_ip = sw["host_ip"] or "monitored"
-                version = sw["version"]
-
-                # Libérer le verrou d'écriture (cache produit / findings hôte
-                # précédent) AVANT le progress_callback : celui-ci écrit task_status
-                # sur une autre connexion et se bloquerait sinon ("database is locked").
-                conn.commit()
-                if progress_callback:
-                    progress_callback(idx, total_sw, vendor, product)
-                logger.info(f"[CPE WATCH] [{idx}/{total_sw}] {vendor}/{product}@{host_ip} v{version or '*'}...")
-
-                for entry in cve_entries:
-                    cve_id = entry["cve"]
-                    product_ranges = entry["ranges"]
-                    if not product_ranges:
-                        continue
-
-                    evaluated_cve_ids.add(cve_id)
-                    # Agrégation multi-plages : AFFECTED prime ; sinon UNKNOWN
-                    # (doute) prime sur NOT_AFFECTED.
-                    states = [_version_in_range(version, r) for r in product_ranges]
-                    if MATCH_AFFECTED in states:
-                        match_state = MATCH_AFFECTED
-                    elif MATCH_UNKNOWN in states:
-                        match_state = MATCH_UNKNOWN
-                    else:
-                        match_state = MATCH_NOT_AFFECTED
-                    logger.debug(
-                        f"[CPE WATCH] {cve_id} — {vendor}/{product} v{version or '*'} "
-                        f"{match_state} (ranges: {product_ranges})"
-                    )
-                    if match_state == MATCH_NOT_AFFECTED:
-                        continue  # prouvé hors plage → pas de finding
-                    # AFFECTED → confiance 'confirmed' ; UNKNOWN → 'unknown'
-                    confidence = "confirmed" if match_state == MATCH_AFFECTED else "unknown"
-
-                    vuln_name = f"[CPE] {cve_id} — {vendor}/{product}"
-                    oid = f"cpe-watch:{cve_id}:{vendor}:{product}"
-
-                    # Upsert vulnerability — RETURNING id élimine le SELECT N+1
-                    cur = conn.execute(
-                        """INSERT INTO vulnerabilities (oid, name, family, cvss_base, solution)
-                           VALUES (?, ?, 'CPE Watch', ?, '')
-                           ON CONFLICT(oid) DO UPDATE SET name=excluded.name, cvss_base=excluded.cvss_base
-                           RETURNING id""",
-                        (oid, vuln_name, entry["score"]),
-                    )
-                    vuln_id = cur.fetchone()[0]
-
-                    # Lier la CVE
-                    conn.execute("INSERT OR IGNORE INTO vuln_cves(vuln_id, cve_id) VALUES(?, ?)", (vuln_id, cve_id))
-
-                    # Upsert finding — RETURNING id élimine le SELECT N+1
-                    sev = entry["score"] or 0
-                    threat = "Critical" if sev >= 9 else "High" if sev >= 7 else "Medium" if sev >= 4 else "Low"
-                    match_range = " ; ".join(product_ranges)  # plages du produit SURVEILLÉ
-                    cur = conn.execute(
-                        """INSERT INTO findings
-                             (vuln_id, host_ip, port, severity, qod, threat, description,
-                              primary_cve, vendor, product, status, first_seen, last_seen,
-                              match_confidence, match_range)
-                           VALUES (?, ?, 'N/A', ?, 100, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
-                           ON CONFLICT(vuln_id, host_ip, port) DO UPDATE SET
-                             severity=MAX(findings.severity, excluded.severity),
-                             last_seen=excluded.last_seen,
-                             status=CASE WHEN findings.status='false_positive'
-                                          THEN 'false_positive' ELSE 'active' END,
-                             resolved_at=CASE WHEN findings.status='false_positive'
-                                          THEN findings.resolved_at ELSE NULL END,
-                             match_confidence=excluded.match_confidence,
-                             vendor=excluded.vendor, product=excluded.product,
-                             match_range=excluded.match_range
-                           RETURNING id""",
-                        (vuln_id, host_ip, sev,
-                         threat, entry["desc"], cve_id,
-                         vendor, product, now, now, confidence, match_range),
-                    )
-                    finding_id = cur.fetchone()[0]
-
-                    conn.execute(
-                        """INSERT OR IGNORE INTO sightings
-                             (finding_id, task_id, task_name, report_id, scan_date)
-                           VALUES (?, 'cpe_watch', 'CPE Watch', ?, ?)""",
-                        (finding_id, f"cpe_watch_{now[:10]}", now),
-                    )
-
-                    seen_vuln_keys.add((vuln_id, host_ip))
-                    total_created += 1
-
-            # Résolution une seule fois par groupe — SEULEMENT si le fetch EUVD
-            # a été complet. Un jeu partiel (page ratée) ne contient qu'une partie
-            # des CVE : lancer la résolution figerait/résoudrait à tort le reste.
-            if not fetch_complete:
-                logger.warning(
-                    f"[CPE WATCH] {vendor}/{product} — fetch partiel, résolution ignorée "
-                    f"(findings existants préservés)"
-                )
-                conn.commit()
-                continue
-
-            # Échapper les wildcards LIKE (les noms CPE contiennent souvent des _)
-            safe_v = vendor.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            safe_p = product.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            existing = conn.execute(
-                """SELECT f.id, f.vuln_id, f.host_ip, v.oid FROM findings f
-                   JOIN vulnerabilities v ON f.vuln_id = v.id
-                   WHERE v.oid LIKE ? ESCAPE '\\' AND f.status = 'active'""",
-                (f"cpe-watch:%:{safe_v}:{safe_p}",),
-            ).fetchall()
-
-            for row in existing:
-                if (row["vuln_id"], row["host_ip"]) in seen_vuln_keys:
-                    continue  # version toujours affectée → conserver
-
-                # Ne résoudre que si le CVE a été explicitement évalué cette run.
-                # Un CVE absent des résultats EUVD (timeout, pagination incomplète)
-                # ne doit PAS déclencher de résolution → sinon flapping garanti.
-                oid_parts = row["oid"].split(":", 3)
-                cve_in_oid = oid_parts[1] if len(oid_parts) == 4 else ""
-                if cve_in_oid not in evaluated_cve_ids:
-                    continue  # EUVD ne l'a pas retourné ce cycle → préserver
-
-                conn.execute(
-                    "UPDATE findings SET status='resolved', resolved_at=? WHERE id=?",
-                    (now, row["id"]),
-                )
-                total_resolved += 1
-
-            # Commit après chaque groupe (vendor/product) pour libérer le verrou
-            conn.commit()
-
-        # Nettoyage final (run complet seulement) : résoudre les findings CPE Watch
-        # dont le couple (vendor, product) extrait de l'OID n'est plus surveillé.
-        # Couvre les cas de renommage de produit (ex. xnview → xnview_mp) et de
-        # suppression d'entrée sans passage par software_delete.
         if item_id is None:
-            monitored_pairs = {(sw["vendor"], sw["product"]) for sw in software_list}
-            orphaned = conn.execute(
-                "SELECT f.id, v.oid FROM findings f"
-                " JOIN vulnerabilities v ON f.vuln_id = v.id"
-                " WHERE v.family='CPE Watch' AND f.status='active'"
-            ).fetchall()
-            orphan_count = 0
-            for row in orphaned:
-                # OID format : cpe-watch:{cve_id}:{vendor}:{product}
-                oid_parts = row["oid"].split(":", 3)
-                if len(oid_parts) == 4:
-                    _, _, oid_vendor, oid_product = oid_parts
-                    if (oid_vendor, oid_product) not in monitored_pairs:
-                        conn.execute(
-                            "UPDATE findings SET status='resolved', resolved_at=? WHERE id=?",
-                            (now, row["id"]),
-                        )
-                        orphan_count += 1
-            if orphan_count:
-                logger.info(f"[CPE WATCH] Nettoyage orphelins: {orphan_count} finding(s) résolus (produit retiré ou renommé)")
-                total_resolved += orphan_count
-                conn.commit()
+            total_resolved += _cpe_cleanup_orphans(conn, software_list, now)
 
         logger.info(f"[CPE WATCH] Terminé: {total_created} findings actifs, {total_resolved} résolus")
 
