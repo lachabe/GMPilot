@@ -263,112 +263,123 @@ def init_db():
         conn.close()
 
 
-def _migrate_schema(conn):
-    """Migre les anciennes tables vers le nouveau schéma si nécessaire."""
-    tables = {r[0] for r in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    ).fetchall()}
+def _migrate_findings_columns(conn, tables):
+    """Ajoute les colonnes FP/traitement/statut + reprise one-shot des anciens champs.
 
-    # Colonnes de traçabilité FP + confiance de correspondance de version
-    # + suivi « en cours de traitement » (n° ticket, qui/quand)
-    # + statuts dynamiques (status_data JSON, status_by/at)
-    if "findings" in tables:
-        fcols = {r[1] for r in conn.execute("PRAGMA table_info(findings)").fetchall()}
-        for col in ("fp_reason", "fp_by", "fp_at", "match_confidence", "match_range",
-                    "ticket_number", "treatment_by", "treatment_at",
-                    "status_data", "status_by", "status_at"):
-            if col not in fcols:
-                conn.execute(f"ALTER TABLE findings ADD COLUMN {col} TEXT")
+    Reprise idempotente : ne cible que les lignes non encore migrées (status_at NULL)
+    des statuts à champs (in_progress/false_positive).
+    """
+    if "findings" not in tables:
+        return
+    fcols = {r[1] for r in conn.execute("PRAGMA table_info(findings)").fetchall()}
+    for col in ("fp_reason", "fp_by", "fp_at", "match_confidence", "match_range",
+                "ticket_number", "treatment_by", "treatment_at",
+                "status_data", "status_by", "status_at"):
+        if col not in fcols:
+            conn.execute(f"ALTER TABLE findings ADD COLUMN {col} TEXT")
+    conn.commit()
+
+    legacy = conn.execute(
+        "SELECT id, status, ticket_number, treatment_by, treatment_at, "
+        "       fp_reason, fp_by, fp_at "
+        "FROM findings WHERE status_at IS NULL AND status IN ('in_progress','false_positive')"
+    ).fetchall()
+    for r in legacy:
+        if r["status"] == "in_progress":
+            data = json.dumps({"ticket_number": r["ticket_number"] or ""}, ensure_ascii=False)
+            by, at = r["treatment_by"], r["treatment_at"]
+        else:  # false_positive
+            data = json.dumps({"reason": r["fp_reason"] or ""}, ensure_ascii=False)
+            by, at = r["fp_by"], r["fp_at"]
+        conn.execute(
+            "UPDATE findings SET status_data=?, status_by=?, status_at=? WHERE id=?",
+            (data, by, at, r["id"]),
+        )
+    if legacy:
         conn.commit()
 
-        # Reprise one-shot : anciens champs FP/traitement → status_data/status_by/status_at.
-        # Idempotent : ne cible que les lignes non encore migrées (status_at NULL) des
-        # statuts à champs. Réécrit les mêmes valeurs si relancé (sans effet de bord).
-        legacy = conn.execute(
-            "SELECT id, status, ticket_number, treatment_by, treatment_at, "
-            "       fp_reason, fp_by, fp_at "
-            "FROM findings WHERE status_at IS NULL AND status IN ('in_progress','false_positive')"
-        ).fetchall()
-        for r in legacy:
-            if r["status"] == "in_progress":
-                data = json.dumps({"ticket_number": r["ticket_number"] or ""}, ensure_ascii=False)
-                by, at = r["treatment_by"], r["treatment_at"]
-            else:  # false_positive
-                data = json.dumps({"reason": r["fp_reason"] or ""}, ensure_ascii=False)
-                by, at = r["fp_by"], r["fp_at"]
-            conn.execute(
-                "UPDATE findings SET status_data=?, status_by=?, status_at=? WHERE id=?",
-                (data, by, at, r["id"]),
-            )
-        if legacy:
-            conn.commit()
 
-    # Colonne manual pour protéger les résolutions DNS saisies à la main
-    if "dns_cache" in tables:
-        dcols = {r[1] for r in conn.execute("PRAGMA table_info(dns_cache)").fetchall()}
-        if "manual" not in dcols:
-            conn.execute("ALTER TABLE dns_cache ADD COLUMN manual INTEGER DEFAULT 0")
+def _migrate_dns_cache(conn, tables):
+    """Colonne `manual` protégeant les résolutions DNS saisies à la main."""
+    if "dns_cache" not in tables:
+        return
+    dcols = {r[1] for r in conn.execute("PRAGMA table_info(dns_cache)").fetchall()}
+    if "manual" not in dcols:
+        conn.execute("ALTER TABLE dns_cache ADD COLUMN manual INTEGER DEFAULT 0")
+    conn.commit()
+
+
+def _migrate_cpe_watch_cols(conn, tables):
+    """Colonnes de suivi version pour la ré-vérification incrémentale CPE Watch."""
+    if "cpe_watch_cache" not in tables:
+        return
+    ccols = {r[1] for r in conn.execute("PRAGMA table_info(cpe_watch_cache)").fetchall()}
+    for col in ("versions_sig", "evaluated_at"):
+        if col not in ccols:
+            conn.execute(f"ALTER TABLE cpe_watch_cache ADD COLUMN {col} TEXT")
+    conn.commit()
+
+
+def _heal_cpe_watch_labels(conn, tables):
+    """Réaligne vendor/product des findings CPE Watch sur leur OID (source de vérité).
+
+    Corrige les anciens libellés parasites (CVE multi-produits ayant figé le nom
+    EUVD d'un autre logiciel). Idempotent, actifs + résolus.
+    """
+    if not ("findings" in tables and "vulnerabilities" in tables):
+        return
+    rows = conn.execute(
+        "SELECT f.id, f.vendor, f.product, v.oid FROM findings f "
+        "JOIN vulnerabilities v ON f.vuln_id=v.id WHERE v.family='CPE Watch'"
+    ).fetchall()
+    fixes = []
+    for r in rows:
+        parts = (r["oid"] or "").split(":")
+        if len(parts) == 4 and parts[0] == "cpe-watch":
+            ov, op = parts[2], parts[3]
+            if (r["vendor"] or "").lower() != ov.lower() or (r["product"] or "").lower() != op.lower():
+                fixes.append((ov, op, r["id"]))
+    if fixes:
+        conn.executemany("UPDATE findings SET vendor=?, product=? WHERE id=?", fixes)
         conn.commit()
+        logger.info(f"[DB MIGRATE] {len(fixes)} findings CPE Watch ré-alignés sur leur OID")
 
-    # Colonnes de suivi version pour la ré-vérification incrémentale CPE Watch
-    if "cpe_watch_cache" in tables:
-        ccols = {r[1] for r in conn.execute("PRAGMA table_info(cpe_watch_cache)").fetchall()}
-        for col in ("versions_sig", "evaluated_at"):
-            if col not in ccols:
-                conn.execute(f"ALTER TABLE cpe_watch_cache ADD COLUMN {col} TEXT")
-        conn.commit()
 
-    # Auto-guérison : réaligner vendor/product des findings CPE Watch sur leur OID
-    # (source de vérité = produit SURVEILLÉ). Corrige les anciens libellés parasites
-    # où un CVE multi-produits avait figé le nom EUVD d'un autre logiciel
-    # (ex. finding Firefox étiqueté « Thunderbird »). Idempotent, actifs + résolus.
-    if "findings" in tables and "vulnerabilities" in tables:
-        rows = conn.execute(
-            "SELECT f.id, f.vendor, f.product, v.oid FROM findings f "
-            "JOIN vulnerabilities v ON f.vuln_id=v.id WHERE v.family='CPE Watch'"
-        ).fetchall()
-        fixes = []
-        for r in rows:
-            parts = (r["oid"] or "").split(":")
-            if len(parts) == 4 and parts[0] == "cpe-watch":
-                ov, op = parts[2], parts[3]
-                if (r["vendor"] or "").lower() != ov.lower() or (r["product"] or "").lower() != op.lower():
-                    fixes.append((ov, op, r["id"]))
-        if fixes:
-            conn.executemany("UPDATE findings SET vendor=?, product=? WHERE id=?", fixes)
-            conn.commit()
-            logger.info(f"[DB MIGRATE] {len(fixes)} findings CPE Watch ré-alignés sur leur OID")
-
-    if "cve_data" in tables:
-        logger.info("[DB MIGRATE] cve_data + kev → cves")
+def _migrate_cve_data(conn, tables):
+    """Ancienne table cve_data (+ kev) → table unifiée cves."""
+    if "cve_data" not in tables:
+        return
+    logger.info("[DB MIGRATE] cve_data + kev → cves")
+    conn.execute("""
+        INSERT OR IGNORE INTO cves
+            (cve_id, vendor, product, product_version, epss, base_score,
+             base_score_vector, exploited_since, description, published,
+             raw_json, euvd_updated_at)
+        SELECT cve_id, vendor, product, product_version, epss, base_score,
+               base_score_vector, exploited_since, description, published,
+               raw_json, updated_at
+        FROM cve_data
+    """)
+    if "kev" in tables:
         conn.execute("""
-            INSERT OR IGNORE INTO cves
-                (cve_id, vendor, product, product_version, epss, base_score,
-                 base_score_vector, exploited_since, description, published,
-                 raw_json, euvd_updated_at)
-            SELECT cve_id, vendor, product, product_version, epss, base_score,
-                   base_score_vector, exploited_since, description, published,
-                   raw_json, updated_at
-            FROM cve_data
+            UPDATE cves SET is_kev=1, kev_date_added=(
+                SELECT date_added FROM kev WHERE kev.cve_id=cves.cve_id
+            ), kev_sources=(
+                SELECT sources FROM kev WHERE kev.cve_id=cves.cve_id
+            )
+            WHERE cve_id IN (SELECT cve_id FROM kev)
         """)
-        if "kev" in tables:
-            conn.execute("""
-                UPDATE cves SET is_kev=1, kev_date_added=(
-                    SELECT date_added FROM kev WHERE kev.cve_id=cves.cve_id
-                ), kev_sources=(
-                    SELECT sources FROM kev WHERE kev.cve_id=cves.cve_id
-                )
-                WHERE cve_id IN (SELECT cve_id FROM kev)
-            """)
-            conn.execute("DROP TABLE kev")
-        conn.execute("DROP TABLE cve_data")
-        conn.commit()
+        conn.execute("DROP TABLE kev")
+    conn.execute("DROP TABLE cve_data")
+    conn.commit()
 
+
+def _migrate_anssi(conn, tables):
+    """Anciennes tables ANSSI : drop `anssi`, migre `anssi_details` → `anssi_publications`."""
     if "anssi" in tables:
         logger.info("[DB MIGRATE] anssi → anssi_cves (via anssi_details)")
         conn.execute("DROP TABLE anssi")
         conn.commit()
-
     if "anssi_details" in tables and "anssi_publications" not in tables:
         logger.info("[DB MIGRATE] anssi_details → anssi_publications")
         conn.executescript(SCHEMA_SQL)
@@ -379,6 +390,23 @@ def _migrate_schema(conn):
         conn.execute("DROP TABLE anssi_details")
         conn.commit()
         _rebuild_anssi_cves(conn)
+
+
+def _migrate_schema(conn):
+    """Migre les anciennes tables vers le nouveau schéma si nécessaire.
+
+    Chaque étape est idempotente et gardée par la présence de ses tables ; l'ordre
+    est préservé (colonnes findings avant leur reprise, etc.).
+    """
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+    _migrate_findings_columns(conn, tables)
+    _migrate_dns_cache(conn, tables)
+    _migrate_cpe_watch_cols(conn, tables)
+    _heal_cpe_watch_labels(conn, tables)
+    _migrate_cve_data(conn, tables)
+    _migrate_anssi(conn, tables)
 
 
 def _rebuild_anssi_cves(conn):
