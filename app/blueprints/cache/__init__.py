@@ -626,116 +626,112 @@ def refresh_existing_cve_cache(progress_callback=None) -> dict:
     return results
 
 
-def enrich_vuln_with_euvd(vuln: dict) -> dict:
-    """
-    Enrichit un dict vulnérabilité avec les données EUVD depuis le cache.
-    Gère les CVE multiples : utilise la première CVE trouvée en cache.
-    Ajoute : euvd_vendor, euvd_product, euvd_epss, euvd_exploited, euvd_url, euvd_data.
-    """
-    # Récupérer toutes les CVE de la vuln
+_VENDOR_EMPTY = {"—", "n/a", "na", "none", "unknown", ""}
+
+
+def _euvd_cves(vuln) -> list:
+    """CVE de la vuln : `cves`, sinon repli sur `cve` unique (hors '—')."""
     cves = vuln.get("cves", [])
     if not cves:
-        # Fallback sur cve unique pour compatibilité
-        single_cve = vuln.get("cve", "")
-        if single_cve and single_cve != "—":
-            cves = [single_cve]
+        single = vuln.get("cve", "")
+        if single and single != "—":
+            cves = [single]
+    return cves
 
-    if not cves:
-        vuln["euvd_data"] = None
-        vuln["all_cves"] = []
-        vuln["euvd_vendor"] = "—"
-        vuln["euvd_product"] = "—"
-        vuln["euvd_epss"] = None
-        vuln["euvd_exploited"] = False
-        vuln["euvd_exploited_since"] = ""
-        return vuln
 
-    vuln["all_cves"] = cves
+def _euvd_set_empty(vuln):
+    """Renseigne les champs EUVD 'absents' communs (pas d'enrichissement)."""
+    vuln["euvd_data"] = None
+    vuln["euvd_vendor"] = "—"
+    vuln["euvd_product"] = "—"
+    vuln["euvd_epss"] = None
+    vuln["euvd_exploited"] = False
+    vuln["euvd_exploited_since"] = ""
 
-    # Chercher la première CVE avec données EUVD en cache
-    euvd = None
-    cve_id = None
+
+def _find_cached_euvd(cves):
+    """Première CVE valide présente en cache → (euvd, cve_id majuscule).
+    Sinon (None, cve_id de la 1re CVE pour le lien, ou None)."""
     for c in cves:
         if CVE_PATTERN.match(c):
             data = read_cve_cache(c)
             if data is not None:
-                euvd = data
-                cve_id = c.upper()
-                break
+                return data, c.upper()
+    cve_id = cves[0].upper() if cves and CVE_PATTERN.match(cves[0]) else None
+    return None, cve_id
 
-    # Si aucune CVE en cache, prendre la première pour le lien
-    if cve_id is None and cves:
-        cve_id = cves[0].upper() if CVE_PATTERN.match(cves[0]) else None
 
-    if euvd is None:
-        vuln["euvd_data"] = None
-        vuln["cve"] = cve_id or "—"
-        vuln["euvd_vendor"] = "—"
-        vuln["euvd_product"] = "—"
-        vuln["euvd_epss"] = None
-        vuln["euvd_exploited"] = False
-        vuln["euvd_exploited_since"] = ""
-        vuln["euvd_url"] = f"{EUVD_WEB_BASE}/{cve_id}" if cve_id else ""
-        return vuln
-
-    # Extraire vendor/product
-    vendor = "—"
-    product = "—"
-    product_version = ""
-
+def _euvd_vendor_product(euvd):
+    """Extrait (vendor, product, product_version) d'une entrée EUVD (vendor normalisé)."""
+    vendor, product, product_version = "—", "—", ""
     vendors = euvd.get("enisaIdVendor", [])
-    if vendors and isinstance(vendors, list) and len(vendors) > 0:
+    if vendors and isinstance(vendors, list):
         v = vendors[0].get("vendor", {})
         vendor = v.get("name", "—") if isinstance(v, dict) else "—"
-
     products = euvd.get("enisaIdProduct", [])
-    if products and isinstance(products, list) and len(products) > 0:
+    if products and isinstance(products, list):
         p = products[0]
         prod_obj = p.get("product", {})
         product = prod_obj.get("name", "—") if isinstance(prod_obj, dict) else "—"
         product_version = p.get("product_version", "")
-
-    # Vérifier exploitation via cache KEV
-    kev_data = read_kev_cache()
-    is_exploited = False
-    exploited_since = ""
-
-    # D'abord vérifier dans EUVD
-    if euvd.get("exploitedSince"):
-        is_exploited = True
-        exploited_since = euvd.get("exploitedSince", "")
-    # Sinon vérifier dans KEV pour toutes les CVE
-    elif kev_data:
-        for c in cves:
-            if c.upper() in kev_data:
-                is_exploited = True
-                kev_entry = kev_data[c.upper()]
-                exploited_since = kev_entry.get("dateAdded", "")
-                break
-
-    vuln["cve"] = cve_id
-    # Normaliser les valeurs absentes/invalides du vendor
-    _VENDOR_EMPTY = {"—", "n/a", "na", "none", "unknown", ""}
     if vendor.strip().lower() in _VENDOR_EMPTY:
         vendor = "—"
+    return vendor, product, product_version
+
+
+def _euvd_exploitation(euvd, cves, kev_data):
+    """(is_exploited, exploited_since) via EUVD.exploitedSince puis fallback KEV."""
+    if euvd.get("exploitedSince"):
+        return True, euvd.get("exploitedSince", "")
+    if kev_data:
+        for c in cves:
+            if c.upper() in kev_data:
+                return True, kev_data[c.upper()].get("dateAdded", "")
+    return False, ""
+
+
+def _euvd_epss(raw_epss):
+    """Normalise l'EPSS dans [0,1] (>1 supposé en pourcentage → /100). None si absent/invalide."""
+    if raw_epss is None:
+        return None
+    try:
+        epss_val = float(raw_epss)
+        if epss_val > 1:
+            epss_val = epss_val / 100.0
+        return min(1.0, max(0.0, epss_val))
+    except (ValueError, TypeError):
+        return None
+
+
+def enrich_vuln_with_euvd(vuln: dict) -> dict:
+    """Enrichit un dict vulnérabilité avec les données EUVD du cache.
+
+    Ajoute euvd_vendor/product/epss/exploited/url/data… en utilisant la première
+    CVE présente en cache. Sans CVE ou sans donnée en cache → valeurs neutres.
+    """
+    cves = _euvd_cves(vuln)
+    if not cves:
+        _euvd_set_empty(vuln)
+        vuln["all_cves"] = []
+        return vuln
+
+    vuln["all_cves"] = cves
+    euvd, cve_id = _find_cached_euvd(cves)
+
+    if euvd is None:
+        _euvd_set_empty(vuln)
+        vuln["cve"] = cve_id or "—"
+        vuln["euvd_url"] = f"{EUVD_WEB_BASE}/{cve_id}" if cve_id else ""
+        return vuln
+
+    vendor, product, product_version = _euvd_vendor_product(euvd)
+    is_exploited, exploited_since = _euvd_exploitation(euvd, cves, read_kev_cache())
+
+    vuln["cve"] = cve_id
     vuln["euvd_vendor"] = vendor.title() if vendor != "—" else "—"
     vuln["euvd_product"] = product.title() if product != "—" else "—"
     vuln["euvd_product_version"] = product_version
-    
-    # Normaliser EPSS (doit être entre 0 et 1)
-    raw_epss = euvd.get("epss")
-    if raw_epss is not None:
-        try:
-            epss_val = float(raw_epss)
-            # Si > 1, c'est probablement en pourcentage (0-100), normaliser
-            if epss_val > 1:
-                epss_val = epss_val / 100.0
-            vuln["euvd_epss"] = min(1.0, max(0.0, epss_val))
-        except (ValueError, TypeError):
-            vuln["euvd_epss"] = None
-    else:
-        vuln["euvd_epss"] = None
-    
+    vuln["euvd_epss"] = _euvd_epss(euvd.get("epss"))
     vuln["euvd_exploited"] = is_exploited
     vuln["euvd_exploited_since"] = exploited_since
     vuln["euvd_url"] = f"{EUVD_WEB_BASE}/{cve_id}"
@@ -747,8 +743,7 @@ def enrich_vuln_with_euvd(vuln: dict) -> dict:
     vuln["euvd_aliases"] = euvd.get("aliases", "").split("\n") if euvd.get("aliases") else []
     vuln["euvd_assigner"] = euvd.get("assigner", "")
     vuln["euvd_published"] = euvd.get("datePublished") or euvd.get("published", "")
-    vuln["euvd_data"] = euvd  # Données complètes pour la modale
-
+    vuln["euvd_data"] = euvd
     return vuln
 
 
