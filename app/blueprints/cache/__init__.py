@@ -335,62 +335,68 @@ def _fetch_and_save(gmp, key, filter_str=""):
 _SCANNER_TYPES = {"1": "OSP", "2": "OpenVAS", "3": "CVE", "4": "GVM"}
 
 
+def _ical_next(ical: str) -> str:
+    """Prochaine occurrence lisible depuis un DTSTART iCalendar."""
+    if not ical:
+        return "—"
+    m = re.search(r"DTSTART[^:]*:([0-9T]+Z?)", ical)
+    if m:
+        raw = m.group(1)
+        try:
+            return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]} {raw[9:11]}:{raw[11:13]} UTC"
+        except Exception:
+            return raw
+    return "Voir iCalendar"
+
+
+def _ical_freq(ical: str) -> str:
+    """Fréquence lisible depuis un RRULE FREQ iCalendar."""
+    if not ical:
+        return "Unique"
+    m = re.search(r"FREQ=([A-Z]+)", ical)
+    if m:
+        return {"DAILY": "Quotidien", "WEEKLY": "Hebdomadaire", "MONTHLY": "Mensuel",
+                "YEARLY": "Annuel", "HOURLY": "Horaire"}.get(m.group(1), m.group(1))
+    return "Unique"
+
+
+def _parse_feeds(xml):
+    return [{"type": f.findtext("type") or "—", "name": f.findtext("name") or "—",
+             "version": f.findtext("version") or "—",
+             "description": f.findtext("description") or "",
+             "syncing": f.find("currently_syncing") is not None}
+            for f in xml.findall("feed")]
+
+
+def _parse_scanners(xml):
+    return [{"id": s.get("id", ""), "name": s.findtext("name") or "—",
+             "host": s.findtext("host") or "local", "port": s.findtext("port") or "—",
+             "type": _SCANNER_TYPES.get(s.findtext("type") or "", s.findtext("type") or "—"),
+             "comment": s.findtext("comment") or ""}
+            for s in xml.findall("scanner")]
+
+
+def _parse_schedules(xml):
+    return [{"id": s.get("id", ""), "name": s.findtext("name") or "—",
+             "comment": s.findtext("comment") or "", "timezone": s.findtext("timezone") or "UTC",
+             "tasks": s.findtext("tasks/count") or "0",
+             "icalendar": s.findtext("icalendar") or "",
+             "next_time": _ical_next(s.findtext("icalendar") or ""),
+             "frequency": _ical_freq(s.findtext("icalendar") or "")}
+            for s in xml.findall("schedule")]
+
+
 def _parse_for_cache(key, xml):
-    """Parse GMP XML en liste de dicts pour stockage JSON."""
+    """Parse GMP XML en liste de dicts pour stockage JSON (dispatch par entité)."""
     from app.gvm_client import parse_tasks, parse_targets, parse_tags, parse_port_lists, parse_scan_configs
+    handlers = {
+        "tasks": parse_tasks, "targets": parse_targets, "tags": parse_tags,
+        "port_lists": parse_port_lists, "scan_configs": parse_scan_configs,
+        "feeds": _parse_feeds, "scanners": _parse_scanners, "schedules": _parse_schedules,
+    }
+    handler = handlers.get(key)
+    return handler(xml) if handler else []
 
-    if key == "tasks":     return parse_tasks(xml)
-    if key == "targets":   return parse_targets(xml)
-    if key == "tags":      return parse_tags(xml)
-    if key == "port_lists": return parse_port_lists(xml)
-    if key == "scan_configs": return parse_scan_configs(xml)
-
-    if key == "feeds":
-        return [{"type": f.findtext("type") or "—", "name": f.findtext("name") or "—",
-                 "version": f.findtext("version") or "—",
-                 "description": f.findtext("description") or "",
-                 "syncing": f.find("currently_syncing") is not None}
-                for f in xml.findall("feed")]
-
-    if key == "scanners":
-        return [{"id": s.get("id", ""), "name": s.findtext("name") or "—",
-                 "host": s.findtext("host") or "local", "port": s.findtext("port") or "—",
-                 "type": _SCANNER_TYPES.get(s.findtext("type") or "", s.findtext("type") or "—"),
-                 "comment": s.findtext("comment") or ""}
-                for s in xml.findall("scanner")]
-
-    if key == "schedules":
-        import re as _re
-
-        def _ical_next(ical):
-            if not ical: return "—"
-            m = _re.search(r"DTSTART[^:]*:([0-9T]+Z?)", ical)
-            if m:
-                raw = m.group(1)
-                try: return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]} {raw[9:11]}:{raw[11:13]} UTC"
-                except Exception: return raw
-            return "Voir iCalendar"
-
-        def _ical_freq(ical):
-            if not ical: return "Unique"
-            m = _re.search(r"FREQ=([A-Z]+)", ical)
-            if m:
-                return {"DAILY": "Quotidien", "WEEKLY": "Hebdomadaire", "MONTHLY": "Mensuel",
-                        "YEARLY": "Annuel", "HOURLY": "Horaire"}.get(m.group(1), m.group(1))
-            return "Unique"
-
-        return [{"id": s.get("id", ""), "name": s.findtext("name") or "—",
-                 "comment": s.findtext("comment") or "", "timezone": s.findtext("timezone") or "UTC",
-                 "tasks": s.findtext("tasks/count") or "0",
-                 "icalendar": s.findtext("icalendar") or "",
-                 "next_time": _ical_next(s.findtext("icalendar") or ""),
-                 "frequency": _ical_freq(s.findtext("icalendar") or "")}
-                for s in xml.findall("schedule")]
-
-    return []
-
-
-# ── Cache CVE (EUVD) ─────────────────────────────────────────────────────────
 
 def _cve_cache_dir():
     """Retourne le chemin du sous-dossier cache/cve/, le crée si nécessaire."""
