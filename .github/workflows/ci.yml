@@ -4,6 +4,12 @@ on:
   push:
   pull_request:
 
+# Un nouveau push sur une même ref annule le run CI en cours (économise le runner,
+# évite les résultats obsolètes).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality:
     runs-on: ubuntu-latest
