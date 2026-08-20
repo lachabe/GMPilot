@@ -17,10 +17,10 @@ jobs:
       actions: read
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Initialiser CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: python
           # Suite par défaut (curée, peu de faux positifs). Pour élargir :
@@ -28,6 +28,6 @@ jobs:
           #   queries: security-and-quality  (sécurité + qualité/maintenabilité)
 
       - name: Analyse
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:python"
