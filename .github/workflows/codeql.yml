@@ -1,0 +1,33 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"   # lundi 06:00 UTC — re-scan hebdomadaire
+
+jobs:
+  analyze:
+    name: Analyse CodeQL (Python)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write   # publier les alertes dans l'onglet Security
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Initialiser CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          # Suite par défaut (curée, peu de faux positifs). Pour élargir :
+          #   queries: security-extended     (plus de requêtes sécurité)
+          #   queries: security-and-quality  (sécurité + qualité/maintenabilité)
+
+      - name: Analyse
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"
