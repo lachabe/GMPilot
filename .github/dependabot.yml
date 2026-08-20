@@ -1,0 +1,29 @@
+version: 2
+updates:
+  # ── Dépendances Python (requirements.txt + requirements-dev.txt) ──
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Regroupe les MàJ mineures/patch en une seule PR (moins de bruit) ;
+      # les majeures restent des PR séparées.
+      python-minor:
+        update-types: ["minor", "patch"]
+
+  # ── Actions GitHub (workflows CI / CodeQL) ──
+  # Aurait proposé le bump checkout@v5 / setup-python@v6 automatiquement.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions:
+        patterns: ["*"]
