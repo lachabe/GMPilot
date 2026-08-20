@@ -210,9 +210,10 @@ def software_check(item_id):
     """Lance la surveillance CPE Watch d'un seul logiciel surveillé."""
     from app.db import get_db
     from app.tasks import start_background_task, is_task_running
-    from app.http_utils import safe_redirect_back
 
-    back = safe_redirect_back(url_for("settings.software"))
+    # software_check est toujours appelé depuis la page Surveillance : on y
+    # retourne via un endpoint fixe — jamais via request.referrer (open-redirect).
+    back = url_for("settings.software")
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
     row = get_db().execute(

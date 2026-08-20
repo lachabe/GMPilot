@@ -1,0 +1,32 @@
+name: Dependabot auto-merge
+
+# Fusionne automatiquement les PR Dependabot minor/patch, une fois les checks
+# requis (CI) au vert. Les MAJEURES restent en revue manuelle.
+#
+# `pull_request_target` est nécessaire pour que GITHUB_TOKEN ait les droits
+# d'écriture sur les PR ouvertes par Dependabot. On NE CHECKOUT PAS le code de
+# la PR (seulement des métadonnées + la CLI gh) → aucune exécution de code non
+# fiable, le motif est sûr.
+
+on: pull_request_target
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    runs-on: ubuntu-latest
+    if: ${{ github.actor == 'dependabot[bot]' }}
+    steps:
+      - name: Métadonnées Dependabot
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+
+      - name: Activer l'auto-merge (minor/patch seulement)
+        if: >-
+          ${{ steps.meta.outputs.update-type == 'version-update:semver-minor' ||
+              steps.meta.outputs.update-type == 'version-update:semver-patch' }}
+        run: gh pr merge --auto --squash "${{ github.event.pull_request.html_url }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
