@@ -3,6 +3,8 @@
 `_api_get_json` (HTTP) est mocké → on teste le dispatch EUVD/MITRE et le parsing
 de la réponse MITRE sans réseau.
 """
+from urllib.parse import urlparse
+
 import pytest
 
 from app.blueprints.cache import fetch_cve_from_euvd
@@ -14,7 +16,9 @@ def mock_api(monkeypatch):
 
     def _apply(euvd=(None, None), mitre=(None, None)):
         def fake(url, label="", throttle=True):
-            return mitre if url.startswith("https://cveawg.mitre.org") else euvd
+            # Comparaison EXACTE du hostname (pas un préfixe/substring) — évite
+            # le faux positif CodeQL py/incomplete-url-substring-sanitization.
+            return mitre if urlparse(url).hostname == "cveawg.mitre.org" else euvd
         monkeypatch.setattr(C, "_api_get_json", fake)
     return _apply
 
