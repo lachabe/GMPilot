@@ -1,0 +1,24 @@
+name: release-please
+
+# Versioning automatique piloté par les Conventional Commits :
+#   fix:  → patch (0.1.0 → 0.1.1)
+#   feat: → minor (0.1.0 → 0.2.0)
+#   feat!/BREAKING CHANGE → minor tant qu'on est en 0.x (bump-minor-pre-major)
+# À chaque push sur main, une PR "release" est ouverte/mise à jour (bump de
+# APP_VERSION + CHANGELOG). La merger crée le tag + la GitHub Release.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

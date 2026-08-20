@@ -12,7 +12,7 @@ csrf = CSRFProtect()
 oauth = OAuth()  # Pour OIDC
 
 APP_NAME = "GMPilot"
-APP_VERSION = "2.0.0"
+APP_VERSION = "0.1.0"  # x-release-please-version
 
 
 def _configure_app(app, config_class):
