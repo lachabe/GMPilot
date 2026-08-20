@@ -14,7 +14,7 @@ def mock_api(monkeypatch):
 
     def _apply(euvd=(None, None), mitre=(None, None)):
         def fake(url, label="", throttle=True):
-            return mitre if "cveawg.mitre.org" in url else euvd
+            return mitre if url.startswith("https://cveawg.mitre.org") else euvd
         monkeypatch.setattr(C, "_api_get_json", fake)
     return _apply
 

@@ -1,6 +1,5 @@
 from app.auth.permissions import require_perm
 """Tags blueprint — reads from SQLite."""
-from urllib.parse import urlparse
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from flask_login import login_required, current_user
 from app.gvm_client import gmp_session_for_user, HOST_ENTITY_TYPE
@@ -8,16 +7,6 @@ from app.gvm_client import gmp_session_for_user, HOST_ENTITY_TYPE
 tags_bp = Blueprint("tags", __name__, url_prefix="/tags")
 PER_PAGE = 50
 
-def _safe_redirect_back(fallback):
-    referrer = request.referrer
-    if referrer:
-        parsed = urlparse(referrer)
-        host_parsed = urlparse(request.host_url)
-        if parsed.netloc == host_parsed.netloc and parsed.scheme in ("http", "https"):
-            safe_path = parsed.path
-            if safe_path and safe_path.startswith("/"):
-                return safe_path
-    return fallback
 
 @tags_bp.route("/")
 @login_required
