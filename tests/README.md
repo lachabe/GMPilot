@@ -10,7 +10,7 @@ implémentation.
 .venv/bin/python -m pytest tests/test_statuses.py -v
 ```
 
-(Installer les deps de dev : `pip install -r requirements-dev.txt`.)
+(Installer les deps : `pip install -r requirements.txt -r requirements-dev.txt`.)
 
 ## Principes
 

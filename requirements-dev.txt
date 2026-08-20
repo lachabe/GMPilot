@@ -1,4 +1,7 @@
-# Dépendances de développement / tests (non requises en production)
--r requirements.txt
+# Outils de développement / tests, à installer EN PLUS de requirements.txt :
+#   pip install -r requirements.txt -r requirements-dev.txt
+#
+# Pas de `-r requirements.txt` ici volontairement : garder les deps runtime dans
+# un SEUL manifest évite que Dependabot ne remonte chaque alerte en double.
 pytest>=8.0
 ruff>=0.6
