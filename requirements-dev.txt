@@ -3,5 +3,5 @@
 #
 # Pas de `-r requirements.txt` ici volontairement : garder les deps runtime dans
 # un SEUL manifest évite que Dependabot ne remonte chaque alerte en double.
-pytest>=8.0
+pytest>=9.1.1
 ruff>=0.6
